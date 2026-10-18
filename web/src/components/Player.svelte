@@ -95,8 +95,10 @@
     }
   }
 
+  // With autoplay called off on the card, the end goes back to the episodes
+  // rather than on to the next one.
   function handleEnded() {
-    finish('ended');
+    finish(autoplayOff ? 'close' : 'ended');
   }
 
   // ---- Progress ----
@@ -154,7 +156,10 @@
 
   // ---- Next episode ----
   let remaining = Infinity;
-  $: showNextUp = !!nextUp && !error && !finished && remaining <= NEXT_UP_SECONDS && remaining > 0;
+  // Cancel on the card stops autoplay for this episode only; the credits keep
+  // playing, and leaving is still the Back button's job.
+  let autoplayOff = false;
+  $: showNextUp = !!nextUp && !autoplayOff && !error && !finished && remaining <= NEXT_UP_SECONDS && remaining > 0;
   $: countdown = Math.ceil(remaining);
   // How far through the countdown we are, 0..1, for the fill behind the button.
   $: nextUpFill = Math.min(1, Math.max(0, 1 - remaining / NEXT_UP_SECONDS));
@@ -174,6 +179,11 @@
 
   function playNext() {
     finish('next');
+  }
+
+  function cancelNextUp() {
+    autoplayOff = true;
+    videoElement?.focus();
   }
 
   // An episode ends once, however it ends. "Play now" in the last seconds would
@@ -488,8 +498,8 @@
         </button>
       {/if}
       <button class="glyph" on:click={handleClose} title="Back (Esc)" aria-label="Back to the share">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
-          <path d="M18 6L6 18M6 6l12 12"/>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M19 12H5M11 18l-6-6 6-6"/>
         </svg>
       </button>
     </div>
@@ -538,7 +548,7 @@
     {#if showNextUp}
       <!-- Sits in the corner the native controls leave free, above their bar. -->
       <aside class="nextup" aria-label="Next episode" aria-live="polite">
-        <button class="nextup__x" on:click={handleClose} aria-label="Cancel and go back to the episodes">
+        <button class="nextup__x" on:click={cancelNextUp} aria-label="Don’t play the next episode">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
             <path d="M18 6L6 18M6 6l12 12"/>
           </svg>
@@ -555,7 +565,7 @@
             <span>Play now</span>
             <span class="nextup__count">{countdown}s</span>
           </button>
-          <button class="nextup__cancel" on:click={handleClose}>Cancel</button>
+          <button class="nextup__cancel" on:click={cancelNextUp}>Cancel</button>
         </div>
       </aside>
     {/if}

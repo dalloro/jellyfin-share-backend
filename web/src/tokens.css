@@ -83,7 +83,9 @@
   --space-4xl: 9rem;
 
   --page-gutter: clamp(1.125rem, 4vw, 3.5rem);
-  --measure: 62ch;
+  /* `ch` is the width of "0", and Geist's average letter is narrower: 50ch
+     sets about 72 characters a line, inside the 65-75 a reader holds. */
+  --measure: 50ch;
 
   /* ---- Geometry ---- */
   --rule-hair:    1px;

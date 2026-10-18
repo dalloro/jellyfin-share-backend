@@ -231,6 +231,16 @@ X-Backend-Key: your-api-key
 GET /api/public/shares/{token}
 ```
 
+`downloadBytes` is the size of the file a download hands over. A link that no
+longer opens answers `410` with why, since when and which link it was:
+
+```json
+{ "error": "share has expired", "reason": "expired", "title": "The Long Walk Home", "endedAt": "2026-10-18T16:58:42Z" }
+```
+
+`reason` is `revoked` or `expired`; a revoke is named over an expiry. A season link
+also carries `seriesName`. Every public endpoint answers a dead link this way.
+
 #### Validate Password
 ```http
 POST /api/public/shares/{token}/password
@@ -259,6 +269,9 @@ The response carries `subtitleUrl` when a text subtitle was selected.
 ```http
 GET /api/public/shares/{token}/episodes
 ```
+
+Each episode carries `sizeBytes`, its file's size; a season ZIP stores the files
+uncompressed, so its size is theirs added up.
 
 #### Start Episode Playback
 ```http

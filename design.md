@@ -226,13 +226,25 @@ signal that playback is local.
 
 ## The terms block
 
-The link's terms sit directly under the button that spends them, on films and
-series alike: the plays meter with its count in mono ("3 of 5 plays left"),
-then sentences in the body face — the concurrent-viewer limit, how a series
-counts plays, and how to reach a TV in a browser with no Cast button. When a
-term is about to bite (the last play, every viewer place taken) its sentence
-moves up to `--color-ink`, brighter rather than red; the meter alone turns
-`--color-danger` at one play left. Red text stays for things that went wrong.
+The terms come in two parts, split around the button that spends them.
+
+Above the controls, the headline: one line at body size, weight 600, in
+`--color-ink` — what is left and until when ("Last of 5 plays · expires in
+2 days", "Expires in 23 hours" on a link with no play limit). Under it the
+2px plays meter, and on the last play the sentence saying what the next tap
+costs ("This is the last play. Watching here or on a TV, or downloading, uses
+it."), so it is read before Play rather than after. A password link shows the
+headline above its form too.
+
+Below the controls, the fine print in `--text-sm` muted: the concurrent-viewer
+limit, how a series counts plays, where resume comes from, and how to reach a
+TV in a browser with no Cast button. When a term is about to bite (the last
+play, every viewer place taken) it moves up to `--color-ink`, brighter rather
+than red, and the meter's fill does the same. Red stays for things that went
+wrong and for the one confirm that spends the last play.
+
+Words, not codes: "Episode 2" (with "Season 2, episode 3" only on a link that
+spans seasons), "in 6 days", file sizes in decimal units. No codec line.
 
 The viewer-limit count is a snapshot and may include a viewer who closed the
 tab without stopping; the server clears those when Play is pressed. So a full
@@ -254,10 +266,14 @@ bottom. The admin index does **not** ship a table below 60 rem — it restacks.
 
 Breakpoints are `40rem` and `60rem`, in that direction (`min-width` first).
 
-Below 40 rem the share page's first screen holds the title, Play and the
-terms: the audio and subtitle choice is one line ("Audio: Default · Subtitles:
-None — Change") above Play, the synopsis follows the terms, and the plate's
-bottom air and the ghost pills' padding are tight until 40 rem restores them.
+Below 40 rem the share page's first screen holds the title, the terms'
+headline and Play: the audio and subtitle choice is one line ("Audio: English
+(Stereo) · Subtitles: None — Change") above Play, Play takes the full width,
+and the secondary actions pair up below it at equal widths, an odd one out
+taking a line of its own. From 40 rem they share one row, and the poster sits
+beside the action column (38 / 42 rem wide) rather than at the far edge. A
+title with no artwork keeps a bare fold of the same height range with the
+single bloom.
 
 ## Verified
 

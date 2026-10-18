@@ -50,7 +50,7 @@ func TestWithholdDetails(t *testing.T) {
 		Overview: "plot", Tagline: "line", RuntimeSeconds: 60, Year: 2020, OfficialRating: "PG",
 		CommunityRating: 7, CriticRating: 80, Genres: []string{"Drama"}, Studios: []string{"S"},
 		Directors: []string{"D"}, Actors: []ActorInfo{{Name: "A"}}, VideoQuality: &VideoQualityInfo{},
-		AudioTracks: []AudioTrack{{Index: 1}}, SubtitleTracks: []SubtitleTrack{{Index: 2}},
+		DownloadBytes: 1 << 30, AudioTracks: []AudioTrack{{Index: 1}}, SubtitleTracks: []SubtitleTrack{{Index: 2}},
 	}
 	info.WithholdDetails()
 
@@ -66,8 +66,40 @@ func TestWithholdDetails(t *testing.T) {
 	if info.Overview != "" || info.Tagline != "" || info.RuntimeSeconds != 0 || info.Year != 0 ||
 		info.OfficialRating != "" || info.CommunityRating != 0 || info.CriticRating != 0 ||
 		info.Genres != nil || info.Studios != nil || info.Directors != nil || info.Actors != nil ||
-		info.VideoQuality != nil || info.AudioTracks != nil || info.SubtitleTracks != nil {
+		info.VideoQuality != nil || info.DownloadBytes != 0 || info.AudioTracks != nil || info.SubtitleTracks != nil {
 		t.Errorf("details leaked before the password: %+v", info)
+	}
+}
+
+func TestGone(t *testing.T) {
+	past := time.Now().Add(-time.Hour)
+	future := time.Now().Add(time.Hour)
+	expiry := func(at time.Time) NullTime { return NullTime{sql.NullTime{Time: at, Valid: true}} }
+	revoked := sql.NullTime{Time: past.Add(-time.Minute), Valid: true}
+	cases := []struct {
+		name       string
+		share      Share
+		wantReason string
+		wantAt     time.Time
+	}{
+		{"live", Share{ExpiresAt: expiry(future)}, "", time.Time{}},
+		{"never expires", Share{}, "", time.Time{}},
+		{"expired", Share{ExpiresAt: expiry(past)}, "expired", past},
+		{"revoked before it expired", Share{ExpiresAt: expiry(future), RevokedAt: revoked}, "revoked", revoked.Time},
+		{"revoked and expired", Share{ExpiresAt: expiry(past), RevokedAt: revoked}, "revoked", revoked.Time},
+	}
+	for _, c := range cases {
+		c.share.Title = "Harbour Lights"
+		gone := c.share.Gone()
+		if c.wantReason == "" {
+			if gone != nil {
+				t.Errorf("%s: a live link is not gone: %+v", c.name, gone)
+			}
+			continue
+		}
+		if gone == nil || gone.Reason != c.wantReason || !gone.EndedAt.Equal(c.wantAt) || gone.Title != "Harbour Lights" {
+			t.Errorf("%s: got %+v, want %s at %v", c.name, gone, c.wantReason, c.wantAt)
+		}
 	}
 }
 

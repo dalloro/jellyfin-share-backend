@@ -86,6 +86,30 @@ func (s *Share) IsRevoked() bool {
 	return s.RevokedAt.Valid
 }
 
+// ShareGone is what a link that no longer opens says about itself: why, since
+// when, and which link it was, so the viewer can tell whoever shared it.
+type ShareGone struct {
+	Error   string    `json:"error"`
+	Reason  string    `json:"reason"` // "revoked" or "expired"
+	Title   string    `json:"title"`
+	// SeriesName is set by the handler for a season link, as on SharePublicInfo.
+	SeriesName string    `json:"seriesName,omitempty"`
+	EndedAt time.Time `json:"endedAt"`
+}
+
+// Gone returns why the share no longer opens, or nil while it still does. A
+// revoke is named over an expiry: it is the sharer's own decision, and the
+// more useful thing to hear.
+func (s *Share) Gone() *ShareGone {
+	switch {
+	case s.IsRevoked():
+		return &ShareGone{Error: "share is no longer available", Reason: "revoked", Title: s.Title, EndedAt: s.RevokedAt.Time}
+	case s.IsExpired():
+		return &ShareGone{Error: "share has expired", Reason: "expired", Title: s.Title, EndedAt: s.ExpiresAt.Time}
+	}
+	return nil
+}
+
 func (s *Share) IsValid() bool {
 	return !s.IsExpired() && !s.IsRevoked()
 }
@@ -211,6 +235,9 @@ type SharePublicInfo struct {
 	Directors       []string          `json:"directors,omitempty"`
 	Actors          []ActorInfo       `json:"actors,omitempty"`
 	VideoQuality    *VideoQualityInfo `json:"videoQuality,omitempty"`
+	// DownloadBytes is the size of the file a download hands over, so a viewer
+	// on mobile data knows what a tap on Download costs.
+	DownloadBytes   int64             `json:"downloadBytes,omitempty"`
 	AudioTracks     []AudioTrack      `json:"audioTracks,omitempty"`
 	SubtitleTracks  []SubtitleTrack   `json:"subtitleTracks,omitempty"`
 }
@@ -233,6 +260,7 @@ func (info *SharePublicInfo) WithholdDetails() {
 	info.Directors = nil
 	info.Actors = nil
 	info.VideoQuality = nil
+	info.DownloadBytes = 0
 	info.AudioTracks = nil
 	info.SubtitleTracks = nil
 }

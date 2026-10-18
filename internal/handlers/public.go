@@ -54,12 +54,15 @@ func (h *PublicHandler) GetShareInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if share.IsExpired() {
-		writeError(w, http.StatusGone, "share has expired")
-		return
-	}
-	if share.IsRevoked() {
-		writeError(w, http.StatusGone, "share is no longer available")
+	if gone := share.Gone(); gone != nil {
+		// A season is titled "Season 1"; the show is the name the viewer knows.
+		// Best effort: the page says the season alone if Jellyfin is down.
+		if share.ItemType == "Season" {
+			if item, err := h.jf.GetItem(r.Context(), share.JellyfinItemID); err == nil && item != nil {
+				gone.SeriesName = item.SeriesName
+			}
+		}
+		writeJSON(w, http.StatusGone, gone)
 		return
 	}
 
@@ -154,6 +157,8 @@ func (h *PublicHandler) enrichShareInfo(info *models.SharePublicInfo, item *jell
 	// Video quality info
 	if len(item.MediaSources) > 0 {
 		ms := item.MediaSources[0]
+		// The first source is the file a download serves.
+		info.DownloadBytes = ms.Size
 		quality := &models.VideoQualityInfo{
 			Container: ms.Container,
 			Bitrate:   ms.Bitrate / 1000, // Convert to kbps
@@ -606,12 +611,8 @@ func (h *PublicHandler) publicShare(w http.ResponseWriter, r *http.Request) (*mo
 		return nil, false
 	}
 
-	if !share.IsValid() {
-		if share.IsExpired() {
-			writeError(w, http.StatusGone, "share has expired")
-		} else {
-			writeError(w, http.StatusGone, "share is no longer available")
-		}
+	if gone := share.Gone(); gone != nil {
+		writeJSON(w, http.StatusGone, gone)
 		return nil, false
 	}
 
@@ -887,7 +888,8 @@ func (h *PublicHandler) GetShareEpisodes(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	episodes, err := h.episodesForShare(r.Context(), share)
+	// The same list episodesForShare checks against, with each file's size.
+	episodes, err := h.jf.GetEpisodeListFor(r.Context(), share.ItemType, share.JellyfinItemID)
 	if err != nil {
 		log.Printf("Failed to get episodes: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to get episodes")

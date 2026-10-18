@@ -193,23 +193,36 @@
   // this warns rather than blocks.
   $: viewersFull = viewerLimit !== null && shareInfo.currentConcurrentViewers >= viewerLimit;
 
-  // The count is a machine fact and reads as one; the sentence under it is
-  // what the count means for the next tap.
   $: playsCount = playLimit ? `${playsLeft} of ${playLimit} ${playLimit === 1 ? 'play' : 'plays'} left` : '';
 
-  // A spent link says its piece in place of the controls instead (see .spent),
-  // except while a TV is still connected and the controls stay on screen.
+  // The headline of the terms: what is left and until when, in one line at
+  // reading size above the button that spends it. The finer print sits below.
+  $: playsHead = !playLimit
+    ? ''
+    : playsUsedUp
+      ? 'No plays left'
+      : lastPlay
+        ? (playLimit === 1 ? 'One play' : `Last of ${playLimit} plays`)
+        : playsCount;
+  $: expiryHead = shareInfo.expiresAt ? `expires ${expiryWords(shareInfo.expiresAt)}` : 'no expiry';
+  const capitalised = (text) => text.charAt(0).toUpperCase() + text.slice(1);
+
+  // Read before the button, not after it. A spent link says its piece in place
+  // of the controls instead (see .spent), except while a TV is still connected
+  // and the controls stay on screen.
   $: playsWarning = playsUsedUp
     ? (spent ? '' : 'Every play on this link has been used.')
     : lastPlay
       ? (playLimit === 1 ? 'This link has a single play. ' : 'This is the last play. ') +
-        (shareInfo.allowDownload ? 'Starting it or downloading uses it.' : 'Starting it uses it.')
+        (shareInfo.allowDownload
+          ? 'Watching here or on a TV, or downloading, uses it.'
+          : 'Watching here or on a TV uses it.')
       : '';
 
   // Resume comes from the link's shared record, which is worth saying once:
-  // the place may have been reached on another device, or by someone else.
+  // the place may have been reached on another device.
   $: resumeNote = (isSeasonOrSeries ? seriesResume && (seriesResume.position > 0 || seriesResume.isNext) : movieResumeAt > 0)
-    ? 'Resumes where anyone with this link left off.'
+    ? 'Picks up where this link was last left off, on any device.'
     : '';
 
   $: viewersLine = !viewerLimit
@@ -265,7 +278,7 @@
       if (said.includes('downloads')) return 'Downloads are switched off for this link.';
     }
     if (status === 400 && said.includes('track')) {
-      return `${what} The audio or subtitle track you picked isn’t available here. Pick another, or go back to Default.${free}`;
+      return `${what} The audio or subtitle track you picked isn’t available here. Pick another.${free}`;
     }
     if (status === 502) return `${what} The media server didn’t answer. Try again in a minute.${free}`;
     return `${what} Try again, or let whoever shared the link know.${free}`;
@@ -279,17 +292,27 @@
     return `${minutes}m`;
   }
 
-  function formatExpiry(expiresAt) {
-    if (!expiresAt) return null; // never expires
-    const expiry = new Date(expiresAt);
-    const now = new Date();
-    const diff = expiry - now;
-    if (diff <= 0) return 'Expired';
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+  // "in 6 days" while there is time to spare; under two days the hours count.
+  function expiryWords(expiresAt) {
+    const diff = new Date(expiresAt) - Date.now();
+    if (!(diff > 0)) return 'now';
     const hours = Math.floor(diff / (1000 * 60 * 60));
-    const days = Math.floor(hours / 24);
-    if (days > 0) return `${days}d ${hours % 24}h`;
-    if (hours > 0) return `${hours}h`;
-    return `${Math.floor(diff / (1000 * 60))}m`;
+    if (hours >= 48) return `in ${plural(Math.floor(hours / 24), 'day')}`;
+    if (hours >= 1) return `in ${plural(hours, 'hour')}`;
+    return `in ${plural(Math.max(1, Math.floor(diff / (1000 * 60))), 'minute')}`;
+  }
+
+  // A download's size, so a tap on mobile data is a choice. Decimal units, as
+  // phones and file managers show them.
+  function formatBytes(bytes) {
+    if (!(bytes > 0)) return '';
+    const units = ['KB', 'MB', 'GB', 'TB'];
+    let n = bytes / 1000;
+    let i = 0;
+    while (n >= 1000 && i < units.length - 1) { n /= 1000; i += 1; }
+    return `${n >= 10 ? Math.round(n) : n.toFixed(1)} ${units[i]}`;
   }
 
   function formatRating(rating) {
@@ -345,6 +368,7 @@
 
   let selectedAudioIndex = null;
   let selectedSubtitleIndex = null;
+  let tracksOpen = false;
 
   // Jellyfin's own titles name codecs ("Deutsch - PGSSUB"), which mean nothing to
   // a viewer. A track is named by its language and, for audio, its layout; only
@@ -369,16 +393,19 @@
   }
 
   $: audioLabels = labelTracks(shareInfo.audioTracks, 'Track');
-  // "Default" alone does not say what plays; the track marked default does.
-  // With no track marked, Jellyfin plays the first.
+  // Left to itself Jellyfin may pick audio by its own account's language
+  // preference, which the page cannot see. So the track marked default - or the
+  // first - is chosen outright and sent like any other choice: what the menu
+  // shows is what plays, and every track is listed once.
   $: defaultAudio = (shareInfo.audioTracks || []).find((t) => t.isDefault) ?? shareInfo.audioTracks?.[0];
-  $: defaultAudioName = defaultAudio && languageName(toBcp47(defaultAudio.language));
-  $: defaultAudioLabel = defaultAudioName ? `Default (${defaultAudioName})` : 'Default';
+  $: if (selectedAudioIndex == null && shareInfo.audioTracks?.length > 1 && defaultAudio) {
+    selectedAudioIndex = defaultAudio.index;
+  }
   $: subtitleLabels = labelTracks(shareInfo.subtitleTracks, 'Subtitle');
   $: hasTracks = (shareInfo.audioTracks?.length > 1) || (shareInfo.subtitleTracks?.length > 0);
   $: tracksSummary = [
     shareInfo.audioTracks?.length > 1
-      ? `Audio: ${selectedAudioIndex == null ? defaultAudioLabel : audioLabels.get(selectedAudioIndex)}`
+      ? `Audio: ${audioLabels.get(selectedAudioIndex)}`
       : null,
     shareInfo.subtitleTracks?.length > 0
       ? `Subtitles: ${selectedSubtitleIndex == null ? 'None' : subtitleLabels.get(selectedSubtitleIndex)}`
@@ -616,10 +643,13 @@
     }
   }
 
+  // In words wherever it is read as a sentence or a button. The season is
+  // named only when the link spans more than one.
+  $: multiSeason = shareInfo.itemType === 'Series';
+
   function episodeLabel(episode) {
-    return episode.seasonNumber
-      ? `S${episode.seasonNumber}E${episode.indexNumber || '?'}`
-      : `Episode ${episode.indexNumber || '?'}`;
+    const n = `Episode ${episode.indexNumber || '?'}`;
+    return multiSeason && episode.seasonNumber ? `Season ${episode.seasonNumber}, ${n.toLowerCase()}` : n;
   }
 
   // The list is already in running order, so "next" is simply the row below.
@@ -701,7 +731,7 @@
       }
       playbackData = data;
       currentEpisodeId = next.id;
-      currentPlayingTitle = `E${next.indexNumber}: ${next.name}`;
+      currentPlayingTitle = `${episodeLabel(next)}: ${next.name}`;
     } catch (e) {
       playError = OFFLINE;
       handlePlayerClose();
@@ -777,7 +807,7 @@
       startPosition = startAt;
       playbackData = await response.json();
       spendPlay();
-      currentPlayingTitle = `E${episode.indexNumber}: ${episode.name}`;
+      currentPlayingTitle = `${episodeLabel(episode)}: ${episode.name}`;
       currentEpisodeId = episode.id;
       isPlaying = true;
     } catch (e) {
@@ -787,8 +817,9 @@
     }
   }
 
-  // Every way out of the player ends here - Back, Cancel on the card, the last
-  // episode ending, a refused next episode - and fullscreen ends with it: it
+  // Every way out of the player ends here - Back, an episode ending after
+  // autoplay was cancelled on the card, the last episode ending, a refused
+  // next episode - and fullscreen ends with it: it
   // belongs to the page, and the episode list has no business filling the
   // screen. Autoplay swaps the player without coming through here, so
   // fullscreen survives the move to the next episode.
@@ -836,16 +867,17 @@
   // Which download is being prepared ('main', an episode id, or 'all'), so only
   // that button shows it.
   let preparingDownload = null;
-  // The download waiting on "this uses your last play" (same keys as above).
+  // The download waiting on its confirm (same keys as above).
   let confirmingDownload = null;
   // Once the last play is spent elsewhere - another row, another device - there
   // is nothing left for an open confirm to guard.
   $: if (playsUsedUp) confirmingDownload = null;
 
-  // On the last play a download asks first, in place: afterwards the link can
-  // no longer be streamed. Play itself does not ask - it is what the link is for.
+  // On a link with a play limit a download asks first, in place: it spends a
+  // play, and a stray tap on a phone would spend it on a large file over mobile
+  // data. Play itself does not ask - it is what the link is for.
   async function requestDownload(path, key) {
-    if (lastPlay && confirmingDownload !== key) {
+    if (playLimit && confirmingDownload !== key) {
       confirmingDownload = key;
       return;
     }
@@ -853,9 +885,9 @@
     await startDownload(path, key);
   }
 
-  // The row's own button opens the confirm on the last play and closes it again;
-  // only "Download it" inside the confirm goes ahead, so a double click on the
-  // row cannot spend the last play.
+  // The row's own button opens the confirm and closes it again; only "Download
+  // it" inside the confirm goes ahead, so a double click on the row cannot
+  // spend a play.
   function rowDownload(key, download) {
     if (confirmingDownload === key) return keepPlay(key);
     return download();
@@ -904,6 +936,21 @@
     requestDownload(`/api/public/shares/${token}/episodes/${episode.id}/download`, episode.id);
   const downloadAll = () => requestDownload(`/api/public/shares/${token}/episodes/download`, 'all');
 
+  // A ZIP stores the files as they are, so its size is theirs added up - known
+  // only when every episode's is.
+  $: allBytes = episodes.length && episodes.every((e) => e.sizeBytes > 0)
+    ? episodes.reduce((sum, e) => sum + e.sizeBytes, 0)
+    : 0;
+
+  // What a confirm says: the size, and what the download costs.
+  function downloadCost(what, bytes) {
+    const size = formatBytes(bytes);
+    const thing = size ? `${what} (${size})` : what;
+    return lastPlay
+      ? `Downloading ${thing} uses ${playLimit === 1 ? 'the link’s only' : 'the last'} play. The link can’t be streamed afterwards.`
+      : `Downloading ${thing} uses one of the ${plural(playsLeft, 'play')} left.`;
+  }
+
   // Escape inside a confirm is "Keep".
   const escapeTo = (key) => (e) => { if (e.key === 'Escape') keepPlay(key); };
 
@@ -937,7 +984,12 @@
     timeZoneName: 'short'
   });
 
-  // "in 2 d 3 h" answers "is this still worth opening"; the exact local moment
+  // "1:00 of 2:00": a resume point means little without the length it is in.
+  function clockOf(position, total) {
+    return total > 0 ? `${formatClock(position)} of ${formatClock(total)}` : formatClock(position);
+  }
+
+  // "in 6 days" answers "is this still worth opening"; the exact local moment
   // answers "when do I lose it". The page shows both, in different places.
   function formatAbsolute(dateStr) {
     const d = new Date(dateStr);
@@ -953,14 +1005,6 @@
     shareInfo.communityRating > 0 ? `Audience ${formatRating(shareInfo.communityRating)}/10` : null,
     shareInfo.criticRating > 0 ? `Critics ${shareInfo.criticRating}%` : null
   ].filter(Boolean);
-
-  $: techBits = shareInfo.videoQuality
-    ? [
-        `${shareInfo.videoQuality.width}\u00d7${shareInfo.videoQuality.height}`,
-        shareInfo.videoQuality.codec?.toUpperCase(),
-        shareInfo.videoQuality.audioCodec?.toUpperCase()
-      ].filter(Boolean)
-    : [];
 
   // Long titles step down a size rung rather than crowding themselves.
   // A season share is titled "Season 1" by Jellyfin; the show it belongs to is
@@ -1006,7 +1050,7 @@
             No plays left
           {:else if shareInfo.expiresAt}
             <time datetime={shareInfo.expiresAt} title={formatAbsolute(shareInfo.expiresAt)}>
-              Expires in {formatExpiry(shareInfo.expiresAt)}
+              Expires {expiryWords(shareInfo.expiresAt)}
             </time>
           {:else}
             No expiry
@@ -1048,6 +1092,26 @@
       {/if}
 
       <div class="act">
+        {#if !spent}
+          <!-- The terms' headline, at reading size and before the button: what is
+               left and until when, then - if it is about to bite - what the next
+               tap costs. The finer print follows below the controls. -->
+          <div class="terms-head">
+            <p class="terms-head__line">
+              {#if playsHead}{playsHead} · {/if}{#if shareInfo.expiresAt}<time datetime={shareInfo.expiresAt} title={formatAbsolute(shareInfo.expiresAt)}>{playsHead ? expiryHead : capitalised(expiryHead)}</time>{:else}{playsHead ? expiryHead : capitalised(expiryHead)}{/if}
+            </p>
+            {#if playLimit}
+              <div class="fuel__track" role="meter" aria-label="Plays left"
+                   aria-valuemin="0" aria-valuemax={playLimit} aria-valuenow={playsLeft}
+                   aria-valuetext={playsCount}>
+                <div class="fuel__fill" class:fuel__fill--low={playsLeft <= 1}
+                     style="transform: scaleX({playsLeft / playLimit})"></div>
+              </div>
+            {/if}
+            {#if playsWarning}<p class="terms-head__warn">{playsWarning}</p>{/if}
+          </div>
+        {/if}
+
         {#if spent}
           <!-- A spent link is a dead end and says so first - before any password,
                which could lead nowhere: every control here could only fail. -->
@@ -1089,17 +1153,16 @@
           {#if hasTracks}
             <!-- Most viewers keep the defaults, so the choice is one line until
                  it is wanted - and it sits above Play, where it still applies. -->
-            <details class="tracks">
+            <details class="tracks" bind:open={tracksOpen}>
               <summary class="tracks__summary">
                 <span class="tracks__now">{tracksSummary}</span>
-                <span class="tracks__change">Change</span>
+                <span class="tracks__change">{tracksOpen ? 'Done' : 'Change'}</span>
               </summary>
               <div class="tracks__fields">
                 {#if shareInfo.audioTracks && shareInfo.audioTracks.length > 1}
                   <div class="field">
                     <label for="audio-select">Audio</label>
                     <select id="audio-select" bind:value={selectedAudioIndex}>
-                      <option value={null}>{defaultAudioLabel}</option>
                       {#each shareInfo.audioTracks as track}
                         <option value={track.index}>{audioLabels.get(track.index)}</option>
                       {/each}
@@ -1133,7 +1196,7 @@
                     <PlayIcon />
                     {#if seriesResume?.position > 0}
                       <span>Resume {episodeLabel(seriesResume.episode)}</span>
-                      <span class="btn__aside">{formatClock(seriesResume.position)}</span>
+                      <span class="btn__aside">{clockOf(seriesResume.position, seriesResume.episode.runtimeSeconds)}</span>
                     {:else if seriesResume}
                       <span>{seriesResume.isNext ? 'Continue with' : 'Play'} {episodeLabel(seriesResume.episode)}</span>
                     {:else}
@@ -1143,41 +1206,41 @@
                 </button>
                 {#if shareInfo.allowDownload}
                   <button class="btn-ghost" id="dl-all" on:click={() => rowDownload('all', downloadAll)}
-                          disabled={busy || playsUsedUp} aria-expanded={lastPlay ? confirmingDownload === 'all' : undefined}>
+                          disabled={busy || playsUsedUp} aria-expanded={playLimit ? confirmingDownload === 'all' : undefined}>
                     <DownloadIcon />
                     <span>{preparingDownload === 'all' ? 'Preparing' : 'Download all'}</span>
-                    <span class="btn__aside">ZIP{playLimit ? ' · 1 play' : ''}</span>
+                    {#if allBytes}<span class="btn__aside">{formatBytes(allBytes)}</span>{/if}
                   </button>
+                {/if}
+                {#if $castApiReady}
+                  <!-- Connecting costs nothing: a play is spent once an episode is picked. -->
+                  {#if $castConnected}
+                    <button class="btn-ghost" on:click={endCastSession}>
+                      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <rect x="6" y="6" width="12" height="12" rx="1.5" />
+                      </svg>
+                      <span>Stop casting</span>
+                    </button>
+                  {:else}
+                    <button class="btn-ghost" on:click={connectCast} disabled={casting}>
+                      <CastIcon />
+                      <span>{casting ? 'Connecting' : 'Cast to a TV'}</span>
+                    </button>
+                  {/if}
                 {/if}
                 {#if confirmingDownload === 'all'}
                   <div class="confirm" role="group" aria-labelledby="confirm-all">
-                    <p class="confirm__q" id="confirm-all">Downloading everything uses the last play. The link can’t be streamed afterwards.</p>
-                    <button class="btn-danger" use:focusOnMount on:keydown={escapeTo('all')} on:click={downloadAll}>Download it</button>
+                    <p class="confirm__q" id="confirm-all">{downloadCost('every episode', allBytes)}</p>
+                    <button class={lastPlay ? 'btn-danger' : 'btn-primary'} use:focusOnMount on:keydown={escapeTo('all')} on:click={downloadAll}>Download it</button>
                     <button class="btn-ghost" on:keydown={escapeTo('all')} on:click={() => keepPlay('all')}>Keep</button>
                   </div>
                 {/if}
               </div>
-            {/if}
-
-            {#if $castApiReady && episodes.length > 0}
-              <div class="castbar">
-                {#if $castConnected}
-                  <p class="castbar__state" role="status">
-                    Connected to <strong>{$castDeviceName}</strong>. Pick an episode to play it there.
-                  </p>
-                  <button class="btn-ghost" on:click={endCastSession}>
-                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                      <rect x="6" y="6" width="12" height="12" rx="1.5" />
-                    </svg>
-                    <span>Stop casting</span>
-                  </button>
-                {:else}
-                  <button class="btn-ghost" on:click={connectCast} disabled={casting}>
-                    <CastIcon />
-                    <span>{casting ? 'Connecting' : 'Cast to a TV'}</span>
-                  </button>
-                {/if}
-              </div>
+              {#if $castConnected}
+                <p class="castbar__state" role="status">
+                  Connected to <strong>{$castDeviceName}</strong>. Pick an episode below to play it there.
+                </p>
+              {/if}
             {/if}
           {:else}
             <div class="play">
@@ -1191,7 +1254,7 @@
                   <PlayIcon />
                   {#if movieResumeAt > 0}
                     <span>Resume</span>
-                    <span class="btn__aside">{formatClock(movieResumeAt)}</span>
+                    <span class="btn__aside">{clockOf(movieResumeAt, shareInfo.runtimeSeconds)}</span>
                   {:else}
                     <span>Play</span>
                   {/if}
@@ -1207,10 +1270,10 @@
 
               {#if shareInfo.allowDownload}
                 <button class="btn-ghost" id="dl-{MAIN}" on:click={() => rowDownload(MAIN, downloadMovie)}
-                        disabled={busy || playsUsedUp} aria-expanded={lastPlay ? confirmingDownload === MAIN : undefined}>
+                        disabled={busy || playsUsedUp} aria-expanded={playLimit ? confirmingDownload === MAIN : undefined}>
                   <DownloadIcon />
                   <span>{preparingDownload === MAIN ? 'Preparing' : 'Download'}</span>
-                  {#if playLimit}<span class="btn__aside">1 play</span>{/if}
+                  {#if shareInfo.downloadBytes}<span class="btn__aside">{formatBytes(shareInfo.downloadBytes)}</span>{/if}
                 </button>
               {/if}
 
@@ -1232,8 +1295,8 @@
               <!-- On a line of its own under the row, so the row keeps its shape. -->
               {#if confirmingDownload === MAIN}
                 <div class="confirm" role="group" aria-labelledby="confirm-main">
-                  <p class="confirm__q" id="confirm-main">Downloading uses the last play. The link can’t be streamed afterwards.</p>
-                  <button class="btn-danger" use:focusOnMount on:keydown={escapeTo(MAIN)} on:click={downloadMovie}>Download it</button>
+                  <p class="confirm__q" id="confirm-main">{downloadCost('the film', shareInfo.downloadBytes)}</p>
+                  <button class={lastPlay ? 'btn-danger' : 'btn-primary'} use:focusOnMount on:keydown={escapeTo(MAIN)} on:click={downloadMovie}>Download it</button>
                   <button class="btn-ghost" on:keydown={escapeTo(MAIN)} on:click={() => keepPlay(MAIN)}>Keep</button>
                 </div>
               {/if}
@@ -1245,21 +1308,9 @@
           {/if}
         {/if}
 
-        {#if !spent && (playLimit || viewerLimit || countingNote || resumeNote || (tvNote && !$castApiReady && !needsPassword))}
-          <!-- The terms, in words, next to the button that spends them. -->
+        {#if !spent && (viewerLimit || countingNote || resumeNote || (tvNote && !$castApiReady && !needsPassword))}
+          <!-- The finer print: how the terms apply. -->
           <div class="terms">
-            {#if playLimit}
-              <div class="fuel">
-                <div class="fuel__track" role="meter" aria-label="Plays left"
-                     aria-valuemin="0" aria-valuemax={playLimit} aria-valuenow={playsLeft}
-                     aria-valuetext={playsCount}>
-                  <div class="fuel__fill" class:fuel__fill--low={playsLeft <= 1}
-                       style="transform: scaleX({playsLeft / playLimit})"></div>
-                </div>
-                <p class="fuel__label">{playsCount}</p>
-              </div>
-            {/if}
-            {#if playsWarning}<p class="terms__line terms__line--warn">{playsWarning}</p>{/if}
             {#if viewersLine}
               <p class="terms__line" class:terms__line--warn={viewersFull}>{viewersLine}</p>
             {/if}
@@ -1297,14 +1348,15 @@
             {:else if episodes.length === 0}
               <p class="msg">This link doesn’t include any episodes yet.</p>
             {:else}
-              <ul class="eplist">
+              <ul class="eplist" class:eplist--seasons={multiSeason}>
                 {#each episodes as episode (episode.id)}
                   {@const seen = watchedFraction(progress.items[episode.id])}
                   <li class="eprow">
                     {#if spent}
                       <!-- Nothing left to play it with: the list stays, as a record. -->
                       <div class="ep ep--static">
-                        <span class="ep__no">{episodeLabel(episode)}</span>
+                        <span class="sr-only">{episodeLabel(episode)}:</span>
+                        <span class="ep__no" aria-hidden="true">{#if multiSeason && episode.seasonNumber}{episode.seasonNumber}.{episode.indexNumber || '?'}{:else}{episode.indexNumber || '?'}{/if}</span>
                         <span class="ep__name">{episode.name}</span>
                         <span class="ep__end">
                           {#if seen >= 1}<span class="ep__watched"><CheckIcon title="Watched" /></span>{/if}
@@ -1316,9 +1368,9 @@
                             class:ep--casting={$castConnected && castingEpisodeId === episode.id}
                             disabled={busy || playsUsedUp}
                             on:click={() => resumeEpisode(episode)}>
-                      <span class="sr-only">{$castConnected ? `Play on ${$castDeviceName}:` : 'Play'}</span>
-                      <span class="ep__no">
-                        {#if episode.seasonNumber}S{episode.seasonNumber}E{episode.indexNumber || '?'}{:else}{episode.indexNumber || '?'}{/if}
+                      <span class="sr-only">{$castConnected ? `Play on ${$castDeviceName}:` : 'Play'} {episodeLabel(episode)}:</span>
+                      <span class="ep__no" aria-hidden="true">
+                        {#if multiSeason && episode.seasonNumber}{episode.seasonNumber}.{episode.indexNumber || '?'}{:else}{episode.indexNumber || '?'}{/if}
                       </span>
                       <span class="ep__name">{episode.name}</span>
                       <span class="ep__end" class:ep__end--cast={$castConnected}>
@@ -1346,8 +1398,9 @@
                     {/if}
                     {#if shareInfo.allowDownload && !spent}
                       <button class="ep__dl" id="dl-{episode.id}" on:click={() => rowDownload(episode.id, () => downloadEpisode(episode))}
-                              disabled={busy || playsUsedUp} aria-expanded={lastPlay ? confirmingDownload === episode.id : undefined}
-                              aria-label="Download {episodeLabel(episode)}: {episode.name}{playLimit ? ' (uses a play)' : ''}">
+                              disabled={busy || playsUsedUp} aria-expanded={playLimit ? confirmingDownload === episode.id : undefined}
+                              title={episode.sizeBytes ? `Download · ${formatBytes(episode.sizeBytes)}` : 'Download'}
+                              aria-label="Download {episodeLabel(episode)}: {episode.name}{episode.sizeBytes ? `, ${formatBytes(episode.sizeBytes)}` : ''}{playLimit ? ' (uses a play)' : ''}">
                         {#if preparingDownload === episode.id}
                           <span class="meter meter--dot" aria-hidden="true"></span>
                         {:else}
@@ -1357,8 +1410,8 @@
                     {/if}
                     {#if confirmingDownload === episode.id}
                       <div class="confirm confirm--row" role="group" aria-labelledby="confirm-{episode.id}">
-                        <p class="confirm__q" id="confirm-{episode.id}">Downloading {episodeLabel(episode)} uses the last play. The link can’t be streamed afterwards.</p>
-                        <button class="btn-danger" use:focusOnMount on:keydown={escapeTo(episode.id)} on:click={() => downloadEpisode(episode)}>Download it</button>
+                        <p class="confirm__q" id="confirm-{episode.id}">{downloadCost(episodeLabel(episode).toLowerCase(), episode.sizeBytes)}</p>
+                        <button class={lastPlay ? 'btn-danger' : 'btn-primary'} use:focusOnMount on:keydown={escapeTo(episode.id)} on:click={() => downloadEpisode(episode)}>Download it</button>
                         <button class="btn-ghost" on:keydown={escapeTo(episode.id)} on:click={() => keepPlay(episode.id)}>Keep</button>
                       </div>
                     {/if}
@@ -1377,7 +1430,7 @@
     </section>
 
     <!-- ── Credits. A spec list, not a card. ── -->
-    {#if (shareInfo.directors && shareInfo.directors.length) || (shareInfo.studios && shareInfo.studios.length) || (shareInfo.actors && shareInfo.actors.length) || techBits.length}
+    {#if (shareInfo.directors && shareInfo.directors.length) || (shareInfo.studios && shareInfo.studios.length) || (shareInfo.actors && shareInfo.actors.length)}
       <section class="credits">
         <dl>
           {#if shareInfo.directors && shareInfo.directors.length > 0}
@@ -1412,12 +1465,6 @@
               </dd>
             </div>
           {/if}
-          {#if techBits.length}
-            <div>
-              <dt>File</dt>
-              <dd class="mono">{techBits.join(' · ')}</dd>
-            </div>
-          {/if}
         </dl>
       </section>
     {/if}
@@ -1425,8 +1472,8 @@
     <!-- Ft2 · Inline single line -->
     <footer class="foot">
       <p>
-        Shared via <a class="foot-link" href="https://github.com/stanislavhannes/jellyfin-share-backend" target="_blank" rel="noopener noreferrer">Jellyfin Share</a>{#if playLimit}{' · '}{playsCount}{/if}{' · '}
-        {#if shareInfo.expiresAt}link expires <time datetime={shareInfo.expiresAt}>{formatAbsolute(shareInfo.expiresAt)}</time>{:else}link does not expire{/if}
+        Shared via <a class="foot-link" href="https://github.com/stanislavhannes/jellyfin-share-backend" target="_blank" rel="noopener noreferrer">Jellyfin Share</a>{#if !spent}{#if playLimit}{' · '}{playsCount}{/if}{' · '}
+        {#if shareInfo.expiresAt}link expires <time datetime={shareInfo.expiresAt}>{formatAbsolute(shareInfo.expiresAt)}</time>{:else}link does not expire{/if}{/if}
       </p>
     </footer>
   {/if}
@@ -1452,9 +1499,14 @@
     overflow: hidden;
   }
 
+  /* No artwork: the fold keeps its height as a deliberate bare ground - the
+     same single bloom as the error and admin pages - rather than collapsing
+     into a flat band. */
   .fold--bare {
-    min-height: 0;
-    background: var(--color-paper-2);
+    min-height: clamp(14rem, 36dvh, 20rem);
+    background:
+      radial-gradient(ellipse 70% 90% at 18% 0%, var(--bloom), transparent 70%),
+      var(--color-paper);
   }
 
   .fold__image {
@@ -1801,12 +1853,22 @@
 
   .confirm--row { padding-bottom: var(--space-md); }
 
+  /* On a phone Play takes the full width and the side doors pair up below it
+     at equal widths; an odd one out takes a line of its own. Wider screens put
+     them all in one row (see the 40rem query). */
   .play {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--space-xs);
+    width: 100%;
   }
+
+  .play > .btn-primary,
+  .play > .confirm,
+  .play > button:last-of-type:nth-of-type(even) { grid-column: 1 / -1; }
+
+  .play > .btn-ghost { min-width: 0; }
+  .play > .btn-ghost > span:not(.btn__aside) { overflow: hidden; text-overflow: ellipsis; }
 
   /* A machine fact riding along in a button: the resume time, the format. */
   .btn__aside {
@@ -1838,7 +1900,23 @@
 
   .link:disabled { opacity: 0.55; cursor: not-allowed; }
 
-  /* ── The terms: the budget as a line, then what it means in words ───────── */
+  /* ── The terms: a headline before the button, the fine print after it ──── */
+  .terms-head {
+    display: grid;
+    gap: var(--space-xs);
+    width: 100%;
+    max-width: var(--measure);
+  }
+
+  .terms-head__line {
+    font-size: var(--text-base);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-ink);
+  }
+
+  .terms-head__warn { color: var(--color-ink); }
+
   .terms {
     display: grid;
     gap: var(--space-xs);
@@ -1854,14 +1932,7 @@
      Red stays for things that went wrong. */
   .terms__line--warn { color: var(--color-ink); }
 
-  .fuel {
-    display: grid;
-    gap: var(--space-xs);
-    width: 100%;
-    max-width: 18rem;
-  }
-
-  .fuel__track { height: 2px; background: var(--color-rule); }
+  .fuel__track { width: 100%; max-width: 18rem; height: 2px; background: var(--color-rule); }
 
   .fuel__fill {
     width: 100%;
@@ -1871,14 +1942,9 @@
     transition: transform var(--dur-long) var(--ease-out);
   }
 
-  .fuel__fill--low { background: var(--color-danger); }
-
-  .fuel__label {
-    font-family: var(--font-outlier);
-    font-size: var(--text-sm);
-    font-variant-numeric: tabular-nums;
-    color: var(--color-muted);
-  }
+  /* The last play is a term about to bite, not something gone wrong: the
+     line brightens to ink rather than turning red. */
+  .fuel__fill--low { background: var(--color-ink); }
 
   /* ── Episodes: an index, same voice as the admin index ─────────────────── */
   .episodes { width: 100%; margin-top: var(--space-md); }
@@ -1899,14 +1965,6 @@
     color: var(--color-muted);
   }
 
-  .castbar {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-sm);
-    margin-bottom: var(--space-md);
-  }
-
   .castbar__state {
     font-size: var(--text-sm);
     color: var(--color-muted);
@@ -1923,7 +1981,9 @@
     display: flex;
     flex-wrap: wrap;
     align-items: stretch;
-    gap: var(--space-xs);
+    /* Air between the row's play glyph and its download, so a thumb aimed at
+       one does not land on the other. */
+    gap: var(--space-md);
     border-bottom: var(--rule-hair) solid var(--color-rule-2);
   }
 
@@ -1933,7 +1993,7 @@
        download button beside it. */
     flex: 1 1 0;
     min-width: 0;
-    grid-template-columns: 4.25rem minmax(0, 1fr) auto;
+    grid-template-columns: 2.5rem minmax(0, 1fr) auto;
     gap: var(--space-md);
     align-items: baseline;
     padding: var(--space-md) 0;
@@ -1949,11 +2009,16 @@
     .ep:hover:not(:disabled) .ep__name { color: var(--color-accent); }
   }
 
+  /* "10.12" needs more than a lone episode number does. */
+  .eplist--seasons .ep { grid-template-columns: 3.25rem minmax(0, 1fr) auto; }
+
   .ep:active:not(:disabled) { transform: translateY(1px); }
 
   .ep:disabled { opacity: 0.55; cursor: not-allowed; }
 
+  /* Nothing left to play it with: the record reads as text, not as controls. */
   .ep--static { cursor: default; }
+  .ep--static .ep__name { font-weight: 400; color: var(--color-ink-2); }
 
   /* A spent link: the statement leads where the button stood. */
   .spent {
@@ -2100,8 +2165,6 @@
 
   dd { margin: 0; min-width: 0; color: var(--color-ink-2); overflow-wrap: anywhere; }
 
-  .mono { font-family: var(--font-outlier); font-variant-numeric: tabular-nums; }
-
   .sr-only {
     position: absolute;
     width: 1px;
@@ -2187,11 +2250,14 @@
   @media (min-width: 40rem) {
     .plate { max-width: min(40rem, 68%); padding-bottom: var(--space-2xl); }
     .act { gap: var(--space-lg); }
-    .play { gap: var(--space-sm); }
+    .play { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); }
+    .play > .confirm { flex-basis: 100%; }
     .btn-ghost { padding-inline: var(--space-lg); }
 
+    /* The print sits beside the column it belongs to, not out at the far edge. */
     .stage {
-      grid-template-columns: minmax(0, 1fr) 11rem;
+      grid-template-columns: minmax(0, 38rem) 11rem;
+      justify-content: start;
       align-items: start;
       padding-top: var(--space-lg);
     }
@@ -2216,7 +2282,7 @@
 
   @media (min-width: 60rem) {
     .stage {
-      grid-template-columns: minmax(0, 1fr) 13.5rem;
+      grid-template-columns: minmax(0, 42rem) 13.5rem;
       gap: var(--space-2xl);
       padding-bottom: var(--space-xl);
     }
