@@ -142,6 +142,13 @@ func main() {
 	// Serve static assets from filesystem
 	r.Handle("/assets/*", http.StripPrefix("/assets/", http.FileServer(http.Dir("web/dist/assets"))))
 
+	// The logo set (icons, manifest). Browsers ask for /favicon.ico on their own,
+	// whatever the page links, so it is answered from the same folder.
+	r.Handle("/brand/*", http.StripPrefix("/brand/", http.FileServer(http.Dir("web/dist/brand"))))
+	r.Get("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "web/dist/brand/favicon.ico")
+	})
+
 	// Start background cleanup task
 	go startCleanupTask(db, cfg)
 

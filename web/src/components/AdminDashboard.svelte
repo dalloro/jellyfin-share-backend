@@ -1,4 +1,5 @@
 <script>
+  import BrandMark from './BrandMark.svelte';
   import { onMount, createEventDispatcher } from 'svelte';
 
   export let apiKey;
@@ -163,7 +164,7 @@
 
 <!-- N5 · Floating pill. Content-sized, visibly detached, blurred over the canvas. -->
 <nav class="pill" aria-label="Admin">
-  <span class="pill__wordmark">Jellyfin Share</span>
+  <span class="pill__wordmark"><BrandMark />Jellyfin Share</span>
   <span class="pill__count" aria-live="polite">{shares.length} links</span>
   <button class="pill__icon" on:click={loadShares} disabled={loading} aria-label="Reload the index">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
@@ -380,6 +381,9 @@
   }
 
   .pill__wordmark {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
     font-family: var(--font-display);
     font-size: var(--text-md);
     letter-spacing: -0.01em;

@@ -1,4 +1,5 @@
 <script>
+  import BrandMark from './BrandMark.svelte';
   import { createEventDispatcher } from 'svelte';
 
   const dispatch = createEventDispatcher();
@@ -43,7 +44,7 @@
 
 <div class="login bloom-ground">
   <header class="nav">
-    <span class="wordmark">Jellyfin Share</span>
+    <span class="wordmark"><BrandMark />Jellyfin Share</span>
     <span class="nav__status">admin</span>
   </header>
 
@@ -124,6 +125,9 @@
   }
 
   .wordmark {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
     font-family: var(--font-display);
     font-size: var(--text-md);
     letter-spacing: -0.01em;

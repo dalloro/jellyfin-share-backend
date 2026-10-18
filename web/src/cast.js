@@ -53,6 +53,20 @@ export function isCastPossible() {
 }
 
 /**
+ * The sentence for a browser that will never show a Cast button, so the viewer
+ * learns how to reach a TV instead of finding nothing. Chromium gets none: its
+ * button appears once the SDK is up. Safari reaches a TV through AirPlay in its
+ * own player controls; anything else has no route from here.
+ */
+export function tvHint() {
+  if (typeof window === 'undefined' || window.chrome) return null;
+  if (window.WebKitPlaybackTargetAvailabilityEvent) {
+    return 'To watch on a TV, start playing and choose AirPlay in the player.';
+  }
+  return 'To watch on a TV, open this link in Chrome or Edge.';
+}
+
+/**
  * Loads the SDK and wires up state. Safe to call more than once, and a no-op on
  * an insecure origin.
  */
@@ -258,7 +272,7 @@ export function toBcp47(code) {
 
 // Gives the receiver something readable in its track menu - "German" rather than
 // a bare "Subtitles" - falling back when the language is unknown.
-function languageName(tag) {
+export function languageName(tag) {
   if (!tag || tag === 'und') return null;
   try {
     return new Intl.DisplayNames([navigator.language || 'en'], { type: 'language' }).of(tag);

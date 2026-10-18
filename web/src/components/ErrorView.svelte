@@ -1,4 +1,5 @@
 <script>
+  import BrandMark from './BrandMark.svelte';
   export let error;
 
   // Errors name what broke, then what to do about it. No apology, no emoji —
@@ -32,7 +33,7 @@
 
 <div class="error bloom-ground">
   <header class="nav">
-    <span class="wordmark">Jellyfin Share</span>
+    <span class="wordmark"><BrandMark />Jellyfin Share</span>
     <span class="nav__status">{error?.status || '—'}</span>
   </header>
 
@@ -77,6 +78,9 @@
   }
 
   .wordmark {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
     font-family: var(--font-display);
     font-size: var(--text-md);
     letter-spacing: -0.01em;

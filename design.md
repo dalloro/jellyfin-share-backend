@@ -135,6 +135,14 @@ button adjacent to one.
 - **No native `confirm()` / `alert()`.** Revoking asks in the row itself
   (`Revoke it` / `Keep`) because it kills live sessions. Failures land in an
   inline banner, not a browser dialog.
+- **The viewer's one confirm.** On a link's last play, a download asks in
+  place (`Download it` / `Keep`), because afterwards the link can no longer be
+  streamed. Focus moves onto `Download it`; `Keep` and Escape return it to the
+  download button. Play itself never asks — it is what the link is for.
+- **Refusals are sentences.** The server's error strings are for logs. The
+  viewer sees what happened, whether a play was used, and what to do, in a
+  `role="alert"` line. Every control that spends a play is held while any one
+  of them is in flight, and Play says *Starting* meanwhile.
 - Focus rings appear **instantly**, never transitioned. On accent fills the
   ring uses `outline-offset: 3px` so it sits on paper, where it has contrast.
 - Inputs validate on **blur**, not per keystroke. Helper text reserves
@@ -152,6 +160,7 @@ button adjacent to one.
 - **Secondary:** ghost — no fill, 1 px `--color-rule` border, pill, ink-2 text.
   *Cast to a TV · Copy link · Stop*.
 - **Destructive:** `--color-danger` fill, only after an in-row confirm step.
+  On the viewer page the one destructive act is spending the last play.
 - Labels never wrap. `white-space: nowrap` on every affordance.
 
 ## Icons
@@ -184,7 +193,13 @@ signal that playback is local.
 
 ## What pages MUST share
 
-- The wordmark: the words "Jellyfin Share" in `--font-display` at `--text-md`.
+- The wordmark: the mark from the logo set, then the words "Jellyfin Share" in
+  `--font-display` at `--text-md`. The mark is `BrandMark.svelte` — the small
+  cut, drawn in `--color-ink`, `--color-ink-2` and `--color-accent` rather than
+  loaded as a file, sized `1.1em` with `--space-sm` before the words. It is
+  decorative (`aria-hidden`); the words carry the name. Its accent dot is the
+  one accent mark allowed outside a filled control. Favicons, the touch icon
+  and the manifest live in `web/public/brand/`.
 - The footer wordmark links to the project on GitHub — the app's one outbound
   link, styled by the global `.foot-link` in `tokens.css`: inherits the footer's
   colour, hairline underline, accent on hover, never wraps, opens in a new tab
@@ -209,6 +224,25 @@ signal that playback is local.
   **Ft2 inline single line** on viewer pages; **Ft4 dense colophon** on admin.
 - Column count and label-row presence in the index, by viewport.
 
+## The terms block
+
+The link's terms sit directly under the button that spends them, on films and
+series alike: the plays meter with its count in mono ("3 of 5 plays left"),
+then sentences in the body face — the concurrent-viewer limit, how a series
+counts plays, and how to reach a TV in a browser with no Cast button. When a
+term is about to bite (the last play, every viewer place taken) its sentence
+moves up to `--color-ink`, brighter rather than red; the meter alone turns
+`--color-danger` at one play left. Red text stays for things that went wrong.
+
+The viewer-limit count is a snapshot and may include a viewer who closed the
+tab without stopping; the server clears those when Play is pressed. So a full
+link warns, and Play stays enabled. A link with no plays left disables every
+control that spends one, because the server will refuse it.
+
+Before the password, a locked link shows its title, artwork and terms, and
+nothing else: the backend withholds the synopsis, credits, ratings, file and
+tracks (`SharePublicInfo.WithholdDetails`).
+
 ## Responsive floor
 
 Every page renders clean at **320 / 375 / 414 / 768 px**. Non-negotiable:
@@ -219,6 +253,11 @@ below 40 rem; `dvh` not `vh`; `env(safe-area-inset-*)` respected top and
 bottom. The admin index does **not** ship a table below 60 rem — it restacks.
 
 Breakpoints are `40rem` and `60rem`, in that direction (`min-width` first).
+
+Below 40 rem the share page's first screen holds the title, Play and the
+terms: the audio and subtitle choice is one line ("Audio: Default · Subtitles:
+None — Change") above Play, the synopsis follows the terms, and the plate's
+bottom air and the ghost pills' padding are tight until 40 rem restores them.
 
 ## Verified
 
