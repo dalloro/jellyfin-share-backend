@@ -77,6 +77,14 @@ func (h *PublicHandler) GetShareInfo(w http.ResponseWriter, r *http.Request) {
 	} else if item != nil {
 		h.enrichShareInfo(&info, item, token)
 	}
+	// A password link shows what it points at and its terms, and nothing else,
+	// until this browser has entered the password.
+	if share.RequiresPassword() && !h.sessions.GetSessionFromCookie(r, token) {
+		info.WithholdDetails()
+		writeJSON(w, http.StatusOK, info)
+		return
+	}
+
 	if item != nil || share.HasEpisodes() {
 		info.AudioTracks, info.SubtitleTracks = h.tracksForItem(r.Context(), item, share.ItemType, share.JellyfinItemID)
 	}

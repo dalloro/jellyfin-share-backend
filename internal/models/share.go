@@ -187,6 +187,9 @@ type SharePublicInfo struct {
 	ItemType                 string    `json:"itemType"`
 	ExpiresAt                *time.Time `json:"expiresAt"`
 	RequiresPassword         bool      `json:"requiresPassword"`
+	// Locked is true while the password has not been entered in this browser.
+	// The response then carries only the title, artwork and terms.
+	Locked                   bool      `json:"locked"`
 	MaxTotalPlays            *int64    `json:"maxTotalPlays,omitempty"`
 	TotalPlays               int       `json:"totalPlays"`
 	MaxConcurrentViewers     *int64    `json:"maxConcurrentViewers,omitempty"`
@@ -206,6 +209,28 @@ type SharePublicInfo struct {
 	VideoQuality    *VideoQualityInfo `json:"videoQuality,omitempty"`
 	AudioTracks     []AudioTrack      `json:"audioTracks,omitempty"`
 	SubtitleTracks  []SubtitleTrack   `json:"subtitleTracks,omitempty"`
+}
+
+// WithholdDetails strips what a password link should not say before its
+// password: the synopsis, credits, ratings, file and track details. What stays
+// is what the link points at - title and artwork - and its terms, so a viewer
+// still knows what they were sent and what it allows.
+func (info *SharePublicInfo) WithholdDetails() {
+	info.Locked = true
+	info.Overview = ""
+	info.Tagline = ""
+	info.RuntimeSeconds = 0
+	info.Year = 0
+	info.OfficialRating = ""
+	info.CommunityRating = 0
+	info.CriticRating = 0
+	info.Genres = nil
+	info.Studios = nil
+	info.Directors = nil
+	info.Actors = nil
+	info.VideoQuality = nil
+	info.AudioTracks = nil
+	info.SubtitleTracks = nil
 }
 
 // DownloadResponse carries the URL the browser fetches the file from. It is
