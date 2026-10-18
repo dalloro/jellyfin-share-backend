@@ -316,24 +316,29 @@ export function stopCast() {
 
 /**
  * The SDK rejects with an error code string or an event-like object, not an
- * Error, so `e.message` is usually undefined. Returns null when the viewer simply
- * dismissed the picker, which is not a failure worth showing.
+ * Error, so `e.message` is usually undefined. Returns { cause, next }: what
+ * happened and what to try, apart so a caller can swap the next step when there
+ * is nothing left to try with. Returns null when the viewer simply dismissed the
+ * picker, which is not a failure worth showing.
  */
 export function describeCastError(e) {
   const code = typeof e === 'string' ? e : (e?.code || e?.message);
   if (code === 'cancel' || code === chrome?.cast?.ErrorCode?.CANCEL) return null;
 
-  // Anything unexpected reaches the console in full. The message below is all the
-  // viewer sees, and "could not cast" on its own is impossible to act on - for a
-  // failure that only shows up on real hardware, the code is the whole diagnosis.
+  // Anything unexpected reaches the console in full: for a failure that only
+  // shows up on real hardware, the code is the whole diagnosis.
   console.error('Cast failed', code, e);
 
+  // The code itself stays in the console; the viewer gets what happened and
+  // what to try, in the page's own voice.
   switch (code) {
-    case 'timeout': return 'The cast device did not respond';
-    case 'receiver_unavailable': return 'No cast device could be reached';
-    case 'session_error': return 'The cast device refused the media';
-    case 'load_failed': return 'The cast device could not load the stream';
-    case 'invalid_parameter': return 'The cast device rejected the request';
-    default: return `Could not cast to the device (${code || 'unknown error'})`;
+    case 'timeout':
+    case 'receiver_unavailable':
+      return { cause: 'The TV couldn’t be reached.', next: 'Check it’s on and on the same Wi-Fi as this device, then try again.' };
+    case 'session_error':
+    case 'load_failed':
+      return { cause: 'The TV couldn’t play the video.', next: 'Try again, or watch here instead.' };
+    default:
+      return { cause: 'Casting didn’t work.', next: 'Try again, or watch here instead.' };
   }
 }

@@ -128,7 +128,7 @@ Navigate to `http://localhost:8097/admin` and enter your `BACKEND_API_KEY`.
 | `JFSHARE_PUBLIC_BASE_URL` | Public URL for share links | Required |
 | `JFSHARE_DB_DSN` | PostgreSQL connection string | Required |
 | `JFSHARE_SESSION_HEARTBEAT_TIMEOUT_SECONDS` | Session timeout | `120` |
-| `JFSHARE_RATE_LIMIT_REQUESTS` | Rate limit requests | `100` |
+| `JFSHARE_RATE_LIMIT_REQUESTS` | Public API calls allowed per IP per window; images and stream segments have their own limit, ten times this | `100` |
 | `JFSHARE_RATE_LIMIT_WINDOW_SECONDS` | Rate limit window | `60` |
 | `JFSHARE_MAX_TRANSCODE_BITRATE` | Upper bound for a transcode target, in bits per second. Only applies when Jellyfin transcodes; direct stream is unaffected | `20000000` |
 | `JFSHARE_STREAM_VIDEO_CODEC` | Fallback video codec, used when the viewer's browser cannot decode the source. A source that already matches is stream-copied, not re-encoded. Empty sends no preference, which lets AV1/HEVC reach the browser untouched | `h264` |
@@ -318,8 +318,14 @@ POST /api/public/sessions/{sessionId}/finish
 ```http
 GET /api/public/stream/{sessionId}/{path}
 GET /api/public/images/{token}/{type}
+GET /api/public/images/{token}/episode/{episodeId}
 GET /api/public/subtitles/{sessionId}/{index}.vtt
 ```
+
+`{type}` is `poster`, `backdrop`, `logo` or `thumb`. `maxWidth` and
+`maxHeight` (up to 1920) and `quality` (up to 100) pass through to Jellyfin.
+An episode's still is served only for an episode inside the shared season or
+series, on a live link that is unlocked if it has a password.
 
 #### Heartbeat (keep session alive)
 ```http

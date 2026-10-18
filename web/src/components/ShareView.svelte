@@ -25,6 +25,8 @@
   let passwordError = '';
   let passwordLoading = false;
   let passwordField;
+  // A phone keyboard makes a hidden password easy to mistype.
+  let showPassword = false;
   // Where focus goes once the link opens: the button that starts watching.
   let playButton;
   let focusPlayWhenReady = false;
@@ -124,6 +126,8 @@
   // Asked for once per unlock. Keying the load on an empty list instead would
   // re-request forever on a season that is empty or whose request failed.
   let episodesRequested = false;
+  // Stills that failed to load leave the row without one, not a broken image.
+  let thumbFailed = {};
 
   onMount(() => {
     initCast();
@@ -205,6 +209,9 @@
         ? (playLimit === 1 ? 'One play' : `Last of ${playLimit} plays`)
         : playsCount;
   $: expiryHead = shareInfo.expiresAt ? `expires ${expiryWords(shareInfo.expiresAt)}` : 'no expiry';
+  // The headline is the one place the terms are stated, so the exact moment
+  // rides along under it rather than in a second and third spot on the page.
+  $: expiryExact = shareInfo.expiresAt ? formatAbsolute(shareInfo.expiresAt) : '';
   const capitalised = (text) => text.charAt(0).toUpperCase() + text.slice(1);
 
   // Read before the button, not after it. A spent link says its piece in place
@@ -556,6 +563,9 @@
     if (casting) return;
     playError = '';
     casting = true;
+    // Set once the server has counted this start: a TV that then fails to load
+    // it has still cost a play, and the message has to say so.
+    let playCharged = false;
     try {
       // Pick the device first. /play counts against the share's play limit, so it
       // must not run if the viewer dismisses the picker.
@@ -577,7 +587,10 @@
         return;
       }
       const data = await response.json();
-      if (charged) spendPlay();
+      if (charged) {
+        spendPlay();
+        playCharged = true;
+      }
       const chosen = (shareInfo.subtitleTracks || []).find((t) => t.index === selectedSubtitleIndex);
       await loadOnCast({
         url: data.playbackUrl,
@@ -595,7 +608,11 @@
       startCastHeartbeat(data.sessionId);
     } catch (e) {
       // A dismissed picker is not a failure.
-      playError = describeCastError(e) || '';
+      const said = describeCastError(e);
+      playError = !said ? ''
+        : !playCharged || !playLimit ? `${said.cause} ${said.next}`
+        : playsUsedUp ? `${said.cause} That was this link’s last play, so it can’t be started again. Ask whoever shared it for another.`
+        : `${said.cause} ${said.next} The play was counted when it started, so starting again uses another.`;
     } finally {
       casting = false;
     }
@@ -637,7 +654,8 @@
     try {
       await ensureCastSession();
     } catch (e) {
-      playError = describeCastError(e) || '';
+      const said = describeCastError(e);
+      playError = said ? `${said.cause} ${said.next}` : '';
     } finally {
       casting = false;
     }
@@ -954,8 +972,9 @@
   // Escape inside a confirm is "Keep".
   const escapeTo = (key) => (e) => { if (e.key === 'Escape') keepPlay(key); };
 
-  // Moves focus into a confirm the moment it appears, so a keyboard viewer
-  // lands on the choice rather than behind it.
+  // Moves focus to the element the moment it appears: a confirm, so a keyboard
+  // viewer lands on the choice rather than behind it, or the password field,
+  // the only thing a locked page asks for.
   function focusOnMount(node) {
     node.focus();
   }
@@ -1029,6 +1048,7 @@
               {startPosition}
               nextUp={nextUpCard}
               progressKey={currentEpisodeId || MAIN}
+              {playsLeft}
               onProgress={recordProgress}
               on:close={handlePlayerClose} on:ended={handlePlaybackEnded}
               on:next={handlePlaybackEnded} />
@@ -1041,21 +1061,10 @@
         <div class="fold__scrim"></div>
       {/if}
 
-      <!-- N9 · Edge-aligned minimal. Wordmark left, the one status a recipient
-           needs right, nothing in between. -->
+      <!-- N9 · Edge-aligned minimal: the wordmark alone. The terms are stated
+           once, in the headline above the controls. -->
       <header class="nav">
         <span class="wordmark"><BrandMark />Jellyfin Share</span>
-        <span class="nav__expiry">
-          {#if spent}
-            No plays left
-          {:else if shareInfo.expiresAt}
-            <time datetime={shareInfo.expiresAt} title={formatAbsolute(shareInfo.expiresAt)}>
-              Expires {expiryWords(shareInfo.expiresAt)}
-            </time>
-          {:else}
-            No expiry
-          {/if}
-        </span>
       </header>
 
       <div class="plate">
@@ -1098,8 +1107,9 @@
                tap costs. The finer print follows below the controls. -->
           <div class="terms-head">
             <p class="terms-head__line">
-              {#if playsHead}{playsHead} · {/if}{#if shareInfo.expiresAt}<time datetime={shareInfo.expiresAt} title={formatAbsolute(shareInfo.expiresAt)}>{playsHead ? expiryHead : capitalised(expiryHead)}</time>{:else}{playsHead ? expiryHead : capitalised(expiryHead)}{/if}
+              {#if playsHead}{playsHead} · {/if}{#if shareInfo.expiresAt}<time datetime={shareInfo.expiresAt}>{playsHead ? expiryHead : capitalised(expiryHead)}</time>{:else}{playsHead ? expiryHead : capitalised(expiryHead)}{/if}
             </p>
+            {#if expiryExact}<p class="terms-head__exact">Until {expiryExact}</p>{/if}
             {#if playLimit}
               <div class="fuel__track" role="meter" aria-label="Plays left"
                    aria-valuemin="0" aria-valuemax={playLimit} aria-valuenow={playsLeft}
@@ -1126,14 +1136,22 @@
               <div class="gate__row">
                 <input
                   id="share-password"
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   autocomplete="current-password"
+                  autocapitalize="off"
+                  spellcheck="false"
+                  use:focusOnMount
                   bind:this={passwordField}
-                  bind:value={passwordInput}
+                  value={passwordInput}
+                  on:input={(e) => (passwordInput = e.currentTarget.value)}
                   readonly={passwordLoading}
                   aria-invalid={passwordError ? 'true' : 'false'}
                   aria-describedby="share-password-help"
                 />
+                <button type="button" class="btn-ghost" aria-controls="share-password"
+                        on:click={() => { showPassword = !showPassword; passwordField?.focus(); }}>
+                  {showPassword ? 'Hide' : 'Show'}<span class="sr-only"> password</span>
+                </button>
                 <button type="submit" class="btn-primary" disabled={passwordLoading}>
                   {#if passwordLoading}
                     <span class="meter meter--inline" aria-hidden="true"></span>
@@ -1204,6 +1222,16 @@
                     {/if}
                   {/if}
                 </button>
+                {#if seriesResume?.position > 0}
+                  <button class="btn-ghost" on:click={() => afterProgress(() => {
+                            const target = seriesResumeTarget(progress, episodes);
+                            if (target) return playEpisode(target.episode);
+                          })}
+                          disabled={busy || playsUsedUp}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+                    <span>From the start<span class="sr-only">: {episodeLabel(seriesResume.episode)}</span></span>
+                  </button>
+                {/if}
                 {#if shareInfo.allowDownload}
                   <button class="btn-ghost" id="dl-all" on:click={() => rowDownload('all', downloadAll)}
                           disabled={busy || playsUsedUp} aria-expanded={playLimit ? confirmingDownload === 'all' : undefined}>
@@ -1238,7 +1266,8 @@
               </div>
               {#if $castConnected}
                 <p class="castbar__state" role="status">
-                  Connected to <strong>{$castDeviceName}</strong>. Pick an episode below to play it there.
+                  {#if castSessionId}Playing on <strong>{$castDeviceName}</strong>. Keep this page open while it plays.
+                  {:else}Connected to <strong>{$castDeviceName}</strong>. Pick an episode below to play it there.{/if}
                 </p>
               {/if}
             {/if}
@@ -1292,6 +1321,13 @@
                 {/if}
               {/if}
 
+              {#if $castConnected}
+                <p class="castbar__state" role="status">
+                  {#if castSessionId}Playing on <strong>{$castDeviceName}</strong>. Keep this page open while it plays.
+                  {:else}Connected to <strong>{$castDeviceName}</strong>.{/if}
+                </p>
+              {/if}
+
               <!-- On a line of its own under the row, so the row keeps its shape. -->
               {#if confirmingDownload === MAIN}
                 <div class="confirm" role="group" aria-labelledby="confirm-main">
@@ -1333,7 +1369,7 @@
 
         {#if isSeasonOrSeries && !needsPassword}
           <div class="episodes">
-            <h2 class="episodes__head">
+            <h2 class="episodes__head" aria-label={episodes.length ? plural(episodes.length, 'episode') : 'Episodes'}>
               Episodes
               {#if episodes.length > 0}<span class="episodes__n">{episodes.length}</span>{/if}
             </h2>
@@ -1348,16 +1384,24 @@
             {:else if episodes.length === 0}
               <p class="msg">This link doesn’t include any episodes yet.</p>
             {:else}
-              <ul class="eplist" class:eplist--seasons={multiSeason}>
+              <ul class="eplist" class:eplist--seasons={multiSeason} class:eplist--spent={spent}>
                 {#each episodes as episode (episode.id)}
                   {@const seen = watchedFraction(progress.items[episode.id])}
+                  {@const thumb = episode.posterUrl && !thumbFailed[episode.id]}
                   <li class="eprow">
                     {#if spent}
                       <!-- Nothing left to play it with: the list stays, as a record. -->
-                      <div class="ep ep--static">
+                      <div class="ep ep--static" class:ep--thumb={thumb}>
                         <span class="sr-only">{episodeLabel(episode)}:</span>
                         <span class="ep__no" aria-hidden="true">{#if multiSeason && episode.seasonNumber}{episode.seasonNumber}.{episode.indexNumber || '?'}{:else}{episode.indexNumber || '?'}{/if}</span>
-                        <span class="ep__name">{episode.name}</span>
+                        {#if thumb}
+                          <img class="ep__thumb" src="{episode.posterUrl}?maxWidth=320" alt="" loading="lazy"
+                               on:error={() => (thumbFailed = { ...thumbFailed, [episode.id]: true })} />
+                        {/if}
+                        <span class="ep__body">
+                          <span class="ep__name">{episode.name}</span>
+                          {#if episode.overview}<span class="ep__about">{episode.overview}</span>{/if}
+                        </span>
                         <span class="ep__end">
                           {#if seen >= 1}<span class="ep__watched"><CheckIcon title="Watched" /></span>{/if}
                           {#if episode.runtimeSeconds}<span class="ep__len">{formatDuration(episode.runtimeSeconds)}</span>{/if}
@@ -1365,14 +1409,23 @@
                       </div>
                     {:else}
                     <button class="ep"
+                            class:ep--thumb={thumb}
                             class:ep--casting={$castConnected && castingEpisodeId === episode.id}
                             disabled={busy || playsUsedUp}
+                            aria-describedby={episode.overview ? `ep-about-${episode.id}` : undefined}
                             on:click={() => resumeEpisode(episode)}>
                       <span class="sr-only">{$castConnected ? `Play on ${$castDeviceName}:` : 'Play'} {episodeLabel(episode)}:</span>
                       <span class="ep__no" aria-hidden="true">
                         {#if multiSeason && episode.seasonNumber}{episode.seasonNumber}.{episode.indexNumber || '?'}{:else}{episode.indexNumber || '?'}{/if}
                       </span>
-                      <span class="ep__name">{episode.name}</span>
+                      {#if thumb}
+                        <img class="ep__thumb" src="{episode.posterUrl}?maxWidth=320" alt="" loading="lazy"
+                             on:error={() => (thumbFailed = { ...thumbFailed, [episode.id]: true })} />
+                      {/if}
+                      <span class="ep__body">
+                        <span class="ep__name">{episode.name}</span>
+                        {#if episode.overview}<span class="ep__about" id="ep-about-{episode.id}" aria-hidden="true">{episode.overview}</span>{/if}
+                      </span>
                       <span class="ep__end" class:ep__end--cast={$castConnected}>
                         {#if seen >= 1}
                           <span class="ep__watched"><CheckIcon title="Watched" /></span>
@@ -1472,8 +1525,7 @@
     <!-- Ft2 · Inline single line -->
     <footer class="foot">
       <p>
-        Shared via <a class="foot-link" href="https://github.com/stanislavhannes/jellyfin-share-backend" target="_blank" rel="noopener noreferrer">Jellyfin Share</a>{#if !spent}{#if playLimit}{' · '}{playsCount}{/if}{' · '}
-        {#if shareInfo.expiresAt}link expires <time datetime={shareInfo.expiresAt}>{formatAbsolute(shareInfo.expiresAt)}</time>{:else}link does not expire{/if}{/if}
+        Shared via <a class="foot-link" href="https://github.com/stanislavhannes/jellyfin-share-backend" target="_blank" rel="noopener noreferrer">Jellyfin Share</a>
       </p>
     </footer>
   {/if}
@@ -1499,11 +1551,11 @@
     overflow: hidden;
   }
 
-  /* No artwork: the fold keeps its height as a deliberate bare ground - the
-     same single bloom as the error and admin pages - rather than collapsing
-     into a flat band. */
+  /* No artwork: no empty stage to wait through. The fold shrinks to the title
+     on the same single bloom as the error and admin pages, and the actions
+     rise to meet it. */
   .fold--bare {
-    min-height: clamp(14rem, 36dvh, 20rem);
+    min-height: 0;
     background:
       radial-gradient(ellipse 70% 90% at 18% 0%, var(--bloom), transparent 70%),
       var(--color-paper);
@@ -1550,15 +1602,6 @@
     font-size: var(--text-md);
     letter-spacing: -0.01em;
     color: var(--color-ink);
-    white-space: nowrap;
-  }
-
-  .nav__expiry,
-  .nav__expiry time {
-    font-family: var(--font-outlier);
-    font-size: var(--text-sm);
-    font-variant-numeric: tabular-nums;
-    color: var(--color-ink-2);
     white-space: nowrap;
   }
 
@@ -1680,16 +1723,17 @@
     overflow-wrap: anywhere;
   }
 
+  /* Ink, not accent: Play is the one thing on the page in Jellyfin blue. */
   .tracks__change {
     font-size: var(--text-sm);
     font-weight: 600;
-    color: var(--color-accent);
+    color: var(--color-ink);
     white-space: nowrap;
-    border-bottom: var(--rule-hair) solid var(--color-accent-dim);
+    border-bottom: var(--rule-hair) solid var(--color-ink-2);
   }
 
   @media (hover: hover) {
-    .tracks__summary:hover .tracks__change { border-bottom-color: var(--color-accent); }
+    .tracks__summary:hover .tracks__change { border-bottom-color: var(--color-ink); }
   }
 
   .tracks[open] .tracks__change { color: var(--color-ink-2); border-bottom-color: var(--color-rule); }
@@ -1853,22 +1897,14 @@
 
   .confirm--row { padding-bottom: var(--space-md); }
 
-  /* On a phone Play takes the full width and the side doors pair up below it
-     at equal widths; an odd one out takes a line of its own. Wider screens put
-     them all in one row (see the 40rem query). */
+  /* On a phone every action takes the full width, Play first: a label is
+     never cut short, and a size or a device name always fits. Wider screens
+     put them in one row (see the 40rem query). */
   .play {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--space-xs);
     width: 100%;
   }
-
-  .play > .btn-primary,
-  .play > .confirm,
-  .play > button:last-of-type:nth-of-type(even) { grid-column: 1 / -1; }
-
-  .play > .btn-ghost { min-width: 0; }
-  .play > .btn-ghost > span:not(.btn__aside) { overflow: hidden; text-overflow: ellipsis; }
 
   /* A machine fact riding along in a button: the resume time, the format. */
   .btn__aside {
@@ -1915,6 +1951,12 @@
     color: var(--color-ink);
   }
 
+  .terms-head__exact {
+    margin-top: calc(-1 * var(--space-2xs));
+    font-size: var(--text-sm);
+    color: var(--color-muted);
+  }
+
   .terms-head__warn { color: var(--color-ink); }
 
   .terms {
@@ -1937,7 +1979,7 @@
   .fuel__fill {
     width: 100%;
     height: 100%;
-    background: var(--color-accent);
+    background: var(--color-neutral);
     transform-origin: left center;
     transition: transform var(--dur-long) var(--ease-out);
   }
@@ -1994,6 +2036,7 @@
     flex: 1 1 0;
     min-width: 0;
     grid-template-columns: 2.5rem minmax(0, 1fr) auto;
+    grid-template-areas: "no body end";
     gap: var(--space-md);
     align-items: baseline;
     padding: var(--space-md) 0;
@@ -2011,6 +2054,25 @@
 
   /* "10.12" needs more than a lone episode number does. */
   .eplist--seasons .ep { grid-template-columns: 3.25rem minmax(0, 1fr) auto; }
+
+  .ep__no { grid-area: no; }
+  .ep__body { grid-area: body; display: grid; gap: var(--space-2xs); min-width: 0; }
+  .ep__end { grid-area: end; }
+
+  /* Jellyfin's own still for the episode, from 40rem where a row has room.
+     Hidden below that, a lazy image never reaches the viewport, so phones
+     do not fetch it. */
+  .ep__thumb { display: none; }
+
+  .ep__about {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    font-size: var(--text-sm);
+    line-height: 1.5;
+    color: var(--color-muted);
+  }
 
   .ep:active:not(:disabled) { transform: translateY(1px); }
 
@@ -2116,6 +2178,9 @@
   }
 
   .ep__seen--done { background: var(--color-accent-dim); }
+
+  /* A spent page has nothing left to act on, so nothing on it is lit. */
+  .eplist--spent .ep__seen { background: var(--color-rule); }
 
   .meter--dot { width: 1rem; }
 
@@ -2240,7 +2305,6 @@
     padding: var(--space-md) var(--page-gutter) var(--space-lg);
     padding-bottom: max(var(--space-lg), env(safe-area-inset-bottom));
     border-top: var(--rule-hair) solid var(--color-rule-2);
-    font-family: var(--font-outlier);
     font-size: var(--text-sm);
     line-height: 1.6;
     color: var(--color-neutral);
@@ -2251,7 +2315,31 @@
     .plate { max-width: min(40rem, 68%); padding-bottom: var(--space-2xl); }
     .act { gap: var(--space-lg); }
     .play { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); }
-    .play > .confirm { flex-basis: 100%; }
+
+    .ep { align-items: center; }
+    .ep--thumb {
+      grid-template-columns: 2.5rem 7.5rem minmax(0, 1fr) auto;
+      grid-template-areas: "no thumb body end";
+    }
+    .eplist--seasons .ep--thumb { grid-template-columns: 3.25rem 7.5rem minmax(0, 1fr) auto; }
+
+    .ep__thumb {
+      display: block;
+      grid-area: thumb;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      object-fit: cover;
+      border-radius: var(--radius-input);
+      background: var(--color-paper-2);
+    }
+
+    .eplist--spent .ep__thumb { opacity: 0.6; }
+
+    /* Without a print the column keeps a reading width instead of running to
+       the far edge. */
+    .stage--noprint .act { max-width: 42rem; }
+    .play > .confirm,
+    .play > .castbar__state { flex-basis: 100%; }
     .btn-ghost { padding-inline: var(--space-lg); }
 
     /* The print sits beside the column it belongs to, not out at the far edge. */

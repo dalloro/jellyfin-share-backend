@@ -13,6 +13,9 @@
   export let startPosition = 0;
   // { label, name } of the episode that follows, or null when nothing does.
   export let nextUp = null;
+  // Plays the link has left after this one, or null when it has no limit. A
+  // failure says from it whether starting again is possible and what it costs.
+  export let playsLeft = null;
   // Called as (key, position, duration). A callback rather than an event: it
   // also runs while this instance is torn down, when events no longer arrive.
   export let onProgress = null;
@@ -39,6 +42,9 @@
   // again - conflating the two is what put "Playback stopped" over a film that
   // was playing perfectly well.
   let error = null;
+  // What the viewer can do about the error: 'restart' it from the share page,
+  // try another 'browser', or nothing, when the server ended the link itself.
+  let errorFix = null;
   let recovering = null;
   let recoveryAttempts = 0;
   let lastRecoveryAt = 0;
@@ -209,7 +215,7 @@
 
   function initPlayer() {
     if (!playbackData?.playbackUrl) {
-      error = 'No playback URL provided';
+      fail('The stream didn’t arrive.', 'restart');
       return;
     }
 
@@ -272,14 +278,14 @@
               hls.recoverMediaError();
             } else {
               recovering = null;
-              error = 'This stream could not be decoded in this browser';
+              fail('This browser couldn’t play the stream.', 'browser');
               cleanup();
             }
             break;
 
           default:
             recovering = null;
-            error = 'Playback error occurred';
+            fail('The stream stopped and couldn’t be picked up again.', 'restart');
             cleanup();
             break;
         }
@@ -297,13 +303,34 @@
       // had none, so a revoked share or a timed-out session left a blank player
       // with no message. Safari is routed here now, so it needs one.
       videoElement.addEventListener('error', () => {
-        error = 'Playback error occurred';
+        fail('The stream stopped and couldn’t be picked up again.', 'restart');
         cleanup();
       });
     } else {
-      error = 'HLS playback is not supported in this browser';
+      fail('This browser can’t play this stream.', 'browser');
     }
   }
+
+  function fail(message, fix) {
+    error = message;
+    errorFix = fix;
+  }
+
+  // The next step after a failure. On the link's last play there is none to
+  // offer here: the share page has nothing left to start.
+  $: nextStep = !errorFix ? ''
+    : playsLeft === 0 ? 'That was this link’s last play, so it can’t be started again. Ask whoever shared it for another.'
+    : (errorFix === 'browser' ? 'Open the link in Chrome, Edge or Safari, or on another device.' : 'Go back and start it again.')
+      + (playsLeft === null ? '' : ' The play was counted when it started, so that uses another.');
+
+  // What the server's reasons for ending a session mean to the viewer, and
+  // whether starting again is still possible. None of them is about this
+  // browser, so none suggests trying another.
+  const ENDED = {
+    revoked: ['Whoever shared this link switched it off.', null],
+    expired: ['This link has expired.', null],
+    terminated: ['This viewing was ended.', 'restart']
+  };
 
   function startHeartbeat() {
     heartbeatInterval = setInterval(async () => {
@@ -320,7 +347,7 @@
         if (response.ok) {
           const data = await response.json();
           if (data.status !== 'ok') {
-            error = data.message || 'Session ended';
+            fail(...(ENDED[data.status] || ENDED.terminated));
             cleanup();
           }
         }
@@ -480,6 +507,12 @@
   <!-- The video is the page. Chrome floats over it and gets out of the way.
        The fullscreen button only appears where it replaces the video's own. -->
   <header class="player__bar">
+    <!-- Back sits where Back is looked for: first, top left. -->
+    <button class="glyph" on:click={handleClose} title="Back (Esc)" aria-label="Back to the share">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M19 12H5M11 18l-6-6 6-6"/>
+      </svg>
+    </button>
     <h2 class="player__title">{title}</h2>
     <div class="player__tools">
       {#if ownFullscreenControl}
@@ -497,11 +530,6 @@
           {/if}
         </button>
       {/if}
-      <button class="glyph" on:click={handleClose} title="Back (Esc)" aria-label="Back to the share">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M19 12H5M11 18l-6-6 6-6"/>
-        </svg>
-      </button>
     </div>
   </header>
 
@@ -510,6 +538,9 @@
       <div class="player__error">
         <p class="player__error-head">Playback stopped</p>
         <p class="player__error-body">{error}</p>
+        {#if nextStep}
+          <p class="player__error-note">{nextStep}</p>
+        {/if}
         <button class="btn-back" on:click={handleClose}>Back to the share</button>
       </div>
     {:else if recovering}
@@ -624,6 +655,8 @@
   }
 
   .player__title {
+    flex: 1 1 auto;
+    align-self: center;
     font-size: var(--text-md);
     line-height: 1.2;
     color: var(--color-ink);
@@ -714,6 +747,12 @@
 
   .player__error-body {
     max-width: 48ch;
+    color: var(--color-muted);
+  }
+
+  .player__error-note {
+    max-width: 48ch;
+    font-size: var(--text-sm);
     color: var(--color-muted);
   }
 

@@ -135,14 +135,22 @@ button adjacent to one.
 - **No native `confirm()` / `alert()`.** Revoking asks in the row itself
   (`Revoke it` / `Keep`) because it kills live sessions. Failures land in an
   inline banner, not a browser dialog.
-- **The viewer's one confirm.** On a link's last play, a download asks in
-  place (`Download it` / `Keep`), because afterwards the link can no longer be
-  streamed. Focus moves onto `Download it`; `Keep` and Escape return it to the
-  download button. Play itself never asks — it is what the link is for.
+- **The viewer's one confirm.** On a link with a play limit, a download asks
+  in place (`Download it` / `Keep`) and names what it costs, because a
+  download spends a play the viewer cannot get back. Focus moves onto
+  `Download it`; `Keep` and Escape return it to the download button. Play
+  itself never asks — it is what the link is for.
 - **Refusals are sentences.** The server's error strings are for logs. The
   viewer sees what happened, whether a play was used, and what to do, in a
-  `role="alert"` line. Every control that spends a play is held while any one
-  of them is in flight, and Play says *Starting* meanwhile.
+  `role="alert"` line. Player and Cast failures say the same: no codes (those
+  go to the console), whether the play was already counted, and a next step
+  ("Check it’s on and on the same Wi-Fi…", "Open the link in Chrome, Edge or
+  Safari") — or, when that was the last play, that it can’t be started again
+  and whom to ask.
+  While something plays on a TV the page says so ("Playing on Living Room. Keep
+  this page open while it plays."), since progress is saved from it. Every
+  control that spends a play is held while any one of them is in flight, and
+  Play says *Starting* meanwhile.
 - Focus rings appear **instantly**, never transitioned. On accent fills the
   ring uses `outline-offset: 3px` so it sits on paper, where it has contrast.
 - Inputs validate on **blur**, not per keystroke. Helper text reserves
@@ -218,10 +226,12 @@ signal that playback is local.
 
 - Macrostructure, within the family declared above.
 - Nav archetype — but not repeated across families:
-  **N9 edge-aligned minimal** on viewer pages (wordmark left, expiry right,
-  nothing between); **N5 floating pill** on the admin surface.
+  **N9 edge-aligned minimal** on viewer pages (the wordmark alone: the terms
+  are stated once, in the terms block); **N5 floating pill** on the admin
+  surface.
 - Footer archetype, same rule:
-  **Ft2 inline single line** on viewer pages; **Ft4 dense colophon** on admin.
+  **Ft2 inline single line** on viewer pages ("Shared via Jellyfin Share", in
+  the body face); **Ft4 dense colophon** on admin.
 - Column count and label-row presence in the index, by viewport.
 
 ## The terms block
@@ -230,11 +240,12 @@ The terms come in two parts, split around the button that spends them.
 
 Above the controls, the headline: one line at body size, weight 600, in
 `--color-ink` — what is left and until when ("Last of 5 plays · expires in
-2 days", "Expires in 23 hours" on a link with no play limit). Under it the
-2px plays meter, and on the last play the sentence saying what the next tap
-costs ("This is the last play. Watching here or on a TV, or downloading, uses
-it."), so it is read before Play rather than after. A password link shows the
-headline above its form too.
+2 days", "Expires in 23 hours" on a link with no play limit). Under it, in
+`--text-sm` muted, the exact end ("Until 21 Oct 2026, 21:00 CEST"), then the
+2px plays meter in `--color-neutral`, and on the last play the sentence saying
+what the next tap costs ("This is the last play. Watching here or on a TV, or
+downloading, uses it."), so it is read before Play rather than after. A
+password link shows the headline above its form too.
 
 Below the controls, the fine print in `--text-sm` muted: the concurrent-viewer
 limit, how a series counts plays, where resume comes from, and how to reach a
@@ -242,6 +253,9 @@ TV in a browser with no Cast button. When a term is about to bite (the last
 play, every viewer place taken) it moves up to `--color-ink`, brighter rather
 than red, and the meter's fill does the same. Red stays for things that went
 wrong and for the one confirm that spends the last play.
+
+The audio and subtitle line's "Change" is ink with a hairline underline, not
+accent: the accent belongs to Play.
 
 Words, not codes: "Episode 2" (with "Season 2, episode 3" only on a link that
 spans seasons), "in 6 days", file sizes in decimal units. No codec line.
@@ -269,11 +283,17 @@ Breakpoints are `40rem` and `60rem`, in that direction (`min-width` first).
 Below 40 rem the share page's first screen holds the title, the terms'
 headline and Play: the audio and subtitle choice is one line ("Audio: English
 (Stereo) · Subtitles: None — Change") above Play, Play takes the full width,
-and the secondary actions pair up below it at equal widths, an odd one out
-taking a line of its own. From 40 rem they share one row, and the poster sits
-beside the action column (38 / 42 rem wide) rather than at the far edge. A
-title with no artwork keeps a bare fold of the same height range with the
-single bloom.
+and each secondary action takes a full-width line of its own below it, so no
+label is ever cut short. From 40 rem they share one row, and the poster sits
+beside the action column (38 / 42 rem wide) rather than at the far edge;
+without a poster the column stops at 42 rem. A title with no artwork gets a
+bare fold that shrinks to the nav and title, with the single bloom.
+
+An episode row carries the overview under the name, clamped to two lines. From
+40 rem it also shows the episode's 16:9 still (7.5 rem) between its number and
+name; a row whose still is missing or fails to load drops the column. On a spent link
+the list stays as a record, with stills at 60 % and watched bars in
+`--color-rule`.
 
 ## Verified
 

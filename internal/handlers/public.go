@@ -863,16 +863,6 @@ func (h *PublicHandler) episodesForShare(ctx context.Context, share *models.Shar
 	return h.jf.GetEpisodesFor(ctx, share.ItemType, share.JellyfinItemID)
 }
 
-// containsEpisode is the check that keeps an episode request inside its share.
-func containsEpisode(episodes []jellyfin.EpisodeInfo, id string) bool {
-	for _, ep := range episodes {
-		if ep.ID == id {
-			return true
-		}
-	}
-	return false
-}
-
 // GetShareEpisodes returns episodes for a Season or Series share
 func (h *PublicHandler) GetShareEpisodes(w http.ResponseWriter, r *http.Request) {
 	token := chi.URLParam(r, "token")
@@ -986,7 +976,7 @@ func (h *PublicHandler) StartEpisodePlayback(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if !containsEpisode(episodes, episodeID) {
+	if !jellyfin.ContainsEpisode(episodes, episodeID) {
 		writeError(w, http.StatusForbidden, "episode not part of this share")
 		return
 	}

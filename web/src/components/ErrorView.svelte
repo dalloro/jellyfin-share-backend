@@ -8,13 +8,13 @@
   const errorMessages = {
     404: {
       title: 'Not found',
-      description: 'This link doesn’t point at anything. It was either never created, or it has been deleted since.',
-      action: 'Ask whoever sent it for a new link.'
+      description: 'This link doesn’t point at anything. Chat apps sometimes cut a link short, so check you opened all of it.',
+      action: 'If it is complete, ask whoever shared it for a new link.'
     },
     410: {
       title: 'No longer available',
       description: 'This link has expired, or whoever shared it switched it off.',
-      action: 'Ask whoever sent it for a new link.'
+      action: 'Ask whoever shared it for a new link.'
     },
     403: {
       title: 'Access denied',
@@ -58,6 +58,8 @@
     ? goneMessage(error.gone)
     : errorMessages[error?.status] || errorMessages.default;
 </script>
+
+<svelte:head><title>{errorInfo.title} · Jellyfin Share</title></svelte:head>
 
 <div class="error bloom-ground">
   <header class="nav">

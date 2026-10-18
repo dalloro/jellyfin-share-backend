@@ -292,6 +292,16 @@ type EpisodeInfo struct {
 	SizeBytes         int64  `json:"sizeBytes,omitempty"`
 }
 
+// ContainsEpisode is the check that keeps an episode request inside its share.
+func ContainsEpisode(episodes []EpisodeInfo, id string) bool {
+	for _, ep := range episodes {
+		if ep.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 // GetEpisodesFor returns the episodes a Season or Series item contains, in
 // running order. Any other item type has none.
 func (c *Client) GetEpisodesFor(ctx context.Context, itemType, itemID string) ([]EpisodeInfo, error) {
