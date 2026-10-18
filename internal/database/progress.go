@@ -8,8 +8,10 @@ import (
 	"github.com/jellyfin-share/jellyfin-share-backend/internal/models"
 )
 
-// SaveProgress records where a link's viewers got to in one item. The latest
-// report wins, whichever device sent it.
+// SaveProgress records where a link's viewers got to in one item, whichever
+// device sent it. The WHERE clause is models.ReplacesProgress, done inside the
+// upsert so two devices reporting at once cannot slip past it: a report under
+// the floor does not replace a position at or over it.
 func (db *DB) SaveProgress(ctx context.Context, shareID uuid.UUID, itemID string, positionSecs, durationSecs int64) error {
 	query := `
 		INSERT INTO share_progress (share_id, item_id, position_secs, duration_secs, updated_at)
@@ -17,8 +19,9 @@ func (db *DB) SaveProgress(ctx context.Context, shareID uuid.UUID, itemID string
 		ON CONFLICT (share_id, item_id) DO UPDATE
 		SET position_secs = EXCLUDED.position_secs,
 		    duration_secs = EXCLUDED.duration_secs,
-		    updated_at = NOW()`
-	if _, err := db.ExecContext(ctx, query, shareID, itemID, positionSecs, durationSecs); err != nil {
+		    updated_at = NOW()
+		WHERE EXCLUDED.position_secs >= $5 OR share_progress.position_secs < $5`
+	if _, err := db.ExecContext(ctx, query, shareID, itemID, positionSecs, durationSecs, models.MinResumeSecs); err != nil {
 		return fmt.Errorf("failed to save progress: %w", err)
 	}
 	return nil

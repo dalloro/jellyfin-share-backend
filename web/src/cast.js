@@ -303,7 +303,8 @@ export function toBcp47(code) {
 export function languageName(tag) {
   if (!tag || tag === 'und') return null;
   try {
-    return new Intl.DisplayNames([navigator.language || 'en'], { type: 'language' }).of(tag);
+    // English, like the page and its labels around the name.
+    return new Intl.DisplayNames(['en'], { type: 'language' }).of(tag);
   } catch (e) {
     return null;
   }

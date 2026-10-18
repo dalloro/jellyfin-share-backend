@@ -167,9 +167,18 @@ X-Backend-Key: your-api-key
 
 #### List Shares
 ```http
-GET /api/admin/shares
+GET /api/admin/shares?limit=50
+GET /api/admin/shares?limit=50&beforeCreatedAt=2026-10-18T15:04:05.123456Z&beforeId=8f0c6a4e-…
 X-Backend-Key: your-api-key
 ```
+
+Newest first, a page at a time: `limit` defaults to 50 and is capped at 200. The
+next page continues below the last link of the previous one - pass its
+`createdAt` and `id` as `beforeCreatedAt` and `beforeId` - so links created or
+cleaned up in between do not shift the pages. The response carries the page in
+`shares`, `hasMore` when another page follows, and `total` (every link) and `live`
+(not revoked, not expired) counted over all links, not just the page. With
+`?jellyfinUserId=…` it returns that user's links whole.
 
 #### Get Share Details
 ```http

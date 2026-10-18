@@ -3,6 +3,7 @@ package models
 import (
 	"database/sql"
 	"encoding/json"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -178,6 +179,9 @@ type SubtitleTrack struct {
 
 type SharePublicInfo struct {
 	Title                    string    `json:"title"`
+	// SeriesName names the show a season share belongs to. Jellyfin titles a
+	// season "Season 1"; on its own that does not say which show.
+	SeriesName               string    `json:"seriesName,omitempty"`
 	Overview                 string    `json:"overview,omitempty"`
 	Tagline                  string    `json:"tagline,omitempty"`
 	RuntimeSeconds           int64     `json:"runtimeSeconds,omitempty"`
@@ -285,6 +289,38 @@ func (s *Share) ToPublicInfo(baseURL string) SharePublicInfo {
 	}
 
 	return info
+}
+
+// The admin index loads links a page at a time. 50 rows is a long screen of
+// the index; 200 caps what one request may ask for.
+const (
+	DefaultPageSize = 50
+	MaxPageSize     = 200
+)
+
+// PageCursor is the last link a page ended on; the next page starts below it.
+// Paging by position instead of by offset keeps the pages steady while links
+// are created, or revoked ones cleaned up, between two loads.
+type PageCursor struct {
+	CreatedAt time.Time
+	ID        uuid.UUID
+}
+
+// ParsePage reads a page request: its size, and the link it continues after.
+// Anything missing, unreadable or out of range falls back to the first page at
+// the default size instead of an error - the index should always show something.
+func ParsePage(limit, beforeCreatedAt, beforeID string) (int, *PageCursor) {
+	l, err := strconv.Atoi(limit)
+	if err != nil || l <= 0 {
+		l = DefaultPageSize
+	}
+	l = min(l, MaxPageSize)
+	at, errAt := time.Parse(time.RFC3339Nano, beforeCreatedAt)
+	id, errID := uuid.Parse(beforeID)
+	if errAt != nil || errID != nil {
+		return l, nil
+	}
+	return l, &PageCursor{CreatedAt: at, ID: id}
 }
 
 type ShareListItem struct {

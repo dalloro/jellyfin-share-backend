@@ -183,6 +183,10 @@
   $: playsLeft = playLimit ? Math.max(0, playLimit - shareInfo.totalPlays) : null;
   $: lastPlay = playsLeft === 1;
   $: playsUsedUp = playsLeft === 0;
+  // The page turns into the spent view only once nothing is still playing: the
+  // last play is spent the moment it starts, and a TV playing it still needs
+  // its Stop button.
+  $: spent = playsUsedUp && !castSessionId && !$castConnected;
   $: viewerLimit = shareInfo.maxConcurrentViewers || null;
   // A snapshot from when the page loaded, and it may count a viewer who closed
   // the tab without stopping. The server clears those when Play is pressed, so
@@ -193,12 +197,20 @@
   // what the count means for the next tap.
   $: playsCount = playLimit ? `${playsLeft} of ${playLimit} ${playLimit === 1 ? 'play' : 'plays'} left` : '';
 
+  // A spent link says its piece in place of the controls instead (see .spent),
+  // except while a TV is still connected and the controls stay on screen.
   $: playsWarning = playsUsedUp
-    ? 'Every play on this link has been used. Ask whoever shared it for a new link.'
+    ? (spent ? '' : 'Every play on this link has been used.')
     : lastPlay
       ? (playLimit === 1 ? 'This link has a single play. ' : 'This is the last play. ') +
         (shareInfo.allowDownload ? 'Starting it or downloading uses it.' : 'Starting it uses it.')
       : '';
+
+  // Resume comes from the link's shared record, which is worth saying once:
+  // the place may have been reached on another device, or by someone else.
+  $: resumeNote = (isSeasonOrSeries ? seriesResume && (seriesResume.position > 0 || seriesResume.isNext) : movieResumeAt > 0)
+    ? 'Resumes where anyone with this link left off.'
+    : '';
 
   $: viewersLine = !viewerLimit
     ? ''
@@ -209,7 +221,7 @@
       : (viewerLimit === 1 ? 'One person can watch at a time.' : `Up to ${viewerLimit} people can watch at once.`);
 
   // How a series spends plays, which is not obvious from "3 plays".
-  $: countingNote = playLimit && !playsUsedUp && isSeasonOrSeries
+  $: countingNote = playLimit && isSeasonOrSeries
     ? 'Episodes watched back to back count as one play.' + (shareInfo.allowDownload ? ' Each download uses one.' : '')
     : '';
 
@@ -239,8 +251,13 @@
     if (status === 429) return `${what} Too many tries in a short time — wait a minute, then try again.`;
     if (status === 403) {
       if (said.includes('maximum plays')) {
+        // The page turns into the spent view, whose statement says this - unless
+        // a TV is still connected, which keeps the controls on screen, or the page
+        // never knew of a limit to count down.
         shareInfo = { ...shareInfo, totalPlays: Math.max(shareInfo.totalPlays, playLimit || 0) };
-        return 'All the plays on this link have been used. Ask whoever shared it for a new link.';
+        return castSessionId || $castConnected || !playLimit
+          ? 'All the plays on this link have been used. Ask whoever shared it for a new link.'
+          : '';
       }
       if (said.includes('concurrent')) {
         return `${what} Every place on this link is taken right now. Try again once someone stops watching.${free}`;
@@ -352,11 +369,16 @@
   }
 
   $: audioLabels = labelTracks(shareInfo.audioTracks, 'Track');
+  // "Default" alone does not say what plays; the track marked default does.
+  // With no track marked, Jellyfin plays the first.
+  $: defaultAudio = (shareInfo.audioTracks || []).find((t) => t.isDefault) ?? shareInfo.audioTracks?.[0];
+  $: defaultAudioName = defaultAudio && languageName(toBcp47(defaultAudio.language));
+  $: defaultAudioLabel = defaultAudioName ? `Default (${defaultAudioName})` : 'Default';
   $: subtitleLabels = labelTracks(shareInfo.subtitleTracks, 'Subtitle');
   $: hasTracks = (shareInfo.audioTracks?.length > 1) || (shareInfo.subtitleTracks?.length > 0);
   $: tracksSummary = [
     shareInfo.audioTracks?.length > 1
-      ? `Audio: ${selectedAudioIndex == null ? 'Default' : audioLabels.get(selectedAudioIndex)}`
+      ? `Audio: ${selectedAudioIndex == null ? defaultAudioLabel : audioLabels.get(selectedAudioIndex)}`
       : null,
     shareInfo.subtitleTracks?.length > 0
       ? `Subtitles: ${selectedSubtitleIndex == null ? 'None' : subtitleLabels.get(selectedSubtitleIndex)}`
@@ -566,7 +588,7 @@
     return castItem({
       playPath: episodePlayPath(episode.id, { codec: 'h264', continues }),
       title: episode.name,
-      subtitle: `${episodeLabel(episode)} \u00b7 ${shareInfo.title}`,
+      subtitle: `${episodeLabel(episode)} \u00b7 ${displayTitle}`,
       durationSeconds: episode.runtimeSeconds,
       episodeId: episode.id,
       startTime,
@@ -816,6 +838,9 @@
   let preparingDownload = null;
   // The download waiting on "this uses your last play" (same keys as above).
   let confirmingDownload = null;
+  // Once the last play is spent elsewhere - another row, another device - there
+  // is nothing left for an open confirm to guard.
+  $: if (playsUsedUp) confirmingDownload = null;
 
   // On the last play a download asks first, in place: afterwards the link can
   // no longer be streamed. Play itself does not ask - it is what the link is for.
@@ -826,6 +851,14 @@
     }
     confirmingDownload = null;
     await startDownload(path, key);
+  }
+
+  // The row's own button opens the confirm on the last play and closes it again;
+  // only "Download it" inside the confirm goes ahead, so a double click on the
+  // row cannot spend the last play.
+  function rowDownload(key, download) {
+    if (confirmingDownload === key) return keepPlay(key);
+    return download();
   }
 
   async function keepPlay(key) {
@@ -893,7 +926,9 @@
     imageLoaded = true;
   }
 
-  const absoluteTime = new Intl.DateTimeFormat(undefined, {
+  // In English, like the rest of the page, but in day-month order with a 24-hour
+  // clock and the zone named, which reads unambiguously wherever the viewer is.
+  const absoluteTime = new Intl.DateTimeFormat('en-GB', {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
@@ -928,11 +963,15 @@
     : [];
 
   // Long titles step down a size rung rather than crowding themselves.
-  $: titleIsLong = (shareInfo.title || '').length > 32;
+  // A season share is titled "Season 1" by Jellyfin; the show it belongs to is
+  // the name a viewer knows it by, with the season beneath it.
+  $: displayTitle = shareInfo.seriesName || shareInfo.title;
+  $: subTitle = shareInfo.seriesName ? shareInfo.title : '';
+  $: titleIsLong = (displayTitle || '').length > 32;
 
   $: foldImage = shareInfo.backdropUrl || shareInfo.posterUrl || '';
 </script>
-<svelte:head><title>{shareInfo.title} · Jellyfin Share</title></svelte:head>
+<svelte:head><title>{[displayTitle, subTitle].filter(Boolean).join(' · ')} · Jellyfin Share</title></svelte:head>
 <svelte:document on:visibilitychange={handleVisibility} />
 
 <div class="share">
@@ -963,7 +1002,9 @@
       <header class="nav">
         <span class="wordmark"><BrandMark />Jellyfin Share</span>
         <span class="nav__expiry">
-          {#if shareInfo.expiresAt}
+          {#if spent}
+            No plays left
+          {:else if shareInfo.expiresAt}
             <time datetime={shareInfo.expiresAt} title={formatAbsolute(shareInfo.expiresAt)}>
               Expires in {formatExpiry(shareInfo.expiresAt)}
             </time>
@@ -975,9 +1016,12 @@
 
       <div class="plate">
         {#if shareInfo.logoUrl}
-          <img class="plate__logo" src="{shareInfo.logoUrl}?maxWidth=500" alt={shareInfo.title} />
+          <img class="plate__logo" src="{shareInfo.logoUrl}?maxWidth=500" alt={displayTitle} />
         {:else}
-          <h1 class="plate__title" class:plate__title--long={titleIsLong}>{shareInfo.title}</h1>
+          <h1 class="plate__title" class:plate__title--long={titleIsLong}>{displayTitle}</h1>
+        {/if}
+        {#if subTitle}
+          <p class="plate__sub">{subTitle}</p>
         {/if}
 
         {#if metaBits.length}
@@ -995,7 +1039,7 @@
         <figure class="print">
           <img
             src="{shareInfo.posterUrl}?maxWidth=400"
-            alt={shareInfo.title}
+            alt={displayTitle}
             class:is-loaded={imageLoaded}
             on:load={handleImageLoad}
             on:error={handleImageError}
@@ -1004,7 +1048,14 @@
       {/if}
 
       <div class="act">
-        {#if showPasswordForm}
+        {#if spent}
+          <!-- A spent link is a dead end and says so first - before any password,
+               which could lead nowhere: every control here could only fail. -->
+          <div class="spent" role="status">
+            <p class="spent__head">{playLimit === 1 ? 'The one play on this link has been used.' : `All ${playLimit} plays on this link have been used.`}</p>
+            <p class="spent__next">Ask whoever shared it for a new link.</p>
+          </div>
+        {:else if showPasswordForm}
           <form class="gate" on:submit|preventDefault={submitPassword} novalidate>
             <div class="field">
               <label for="share-password">Password</label>
@@ -1048,7 +1099,7 @@
                   <div class="field">
                     <label for="audio-select">Audio</label>
                     <select id="audio-select" bind:value={selectedAudioIndex}>
-                      <option value={null}>Default</option>
+                      <option value={null}>{defaultAudioLabel}</option>
                       {#each shareInfo.audioTracks as track}
                         <option value={track.index}>{audioLabels.get(track.index)}</option>
                       {/each}
@@ -1091,20 +1142,19 @@
                   {/if}
                 </button>
                 {#if shareInfo.allowDownload}
-                  {#if confirmingDownload === 'all'}
-                    <div class="confirm" role="group" aria-labelledby="confirm-all">
-                      <p class="confirm__q" id="confirm-all">Downloading everything uses the last play. The link can’t be streamed afterwards.</p>
-                      <button class="btn-danger" use:focusOnMount on:keydown={escapeTo('all')} on:click={downloadAll}>Download it</button>
-                      <button class="btn-ghost" on:keydown={escapeTo('all')} on:click={() => keepPlay('all')}>Keep</button>
-                    </div>
-                  {:else}
-                    <button class="btn-ghost" id="dl-all" on:click={downloadAll}
-                            disabled={busy || playsUsedUp}>
-                      <DownloadIcon />
-                      <span>{preparingDownload === 'all' ? 'Preparing' : 'Download all'}</span>
-                      <span class="btn__aside">ZIP{playLimit ? ' · 1 play' : ''}</span>
-                    </button>
-                  {/if}
+                  <button class="btn-ghost" id="dl-all" on:click={() => rowDownload('all', downloadAll)}
+                          disabled={busy || playsUsedUp} aria-expanded={lastPlay ? confirmingDownload === 'all' : undefined}>
+                    <DownloadIcon />
+                    <span>{preparingDownload === 'all' ? 'Preparing' : 'Download all'}</span>
+                    <span class="btn__aside">ZIP{playLimit ? ' · 1 play' : ''}</span>
+                  </button>
+                {/if}
+                {#if confirmingDownload === 'all'}
+                  <div class="confirm" role="group" aria-labelledby="confirm-all">
+                    <p class="confirm__q" id="confirm-all">Downloading everything uses the last play. The link can’t be streamed afterwards.</p>
+                    <button class="btn-danger" use:focusOnMount on:keydown={escapeTo('all')} on:click={downloadAll}>Download it</button>
+                    <button class="btn-ghost" on:keydown={escapeTo('all')} on:click={() => keepPlay('all')}>Keep</button>
+                  </div>
                 {/if}
               </div>
             {/if}
@@ -1156,20 +1206,12 @@
               {/if}
 
               {#if shareInfo.allowDownload}
-                {#if confirmingDownload === MAIN}
-                  <div class="confirm" role="group" aria-labelledby="confirm-main">
-                    <p class="confirm__q" id="confirm-main">Downloading uses the last play. The link can’t be streamed afterwards.</p>
-                    <button class="btn-danger" use:focusOnMount on:keydown={escapeTo(MAIN)} on:click={downloadMovie}>Download it</button>
-                    <button class="btn-ghost" on:keydown={escapeTo(MAIN)} on:click={() => keepPlay(MAIN)}>Keep</button>
-                  </div>
-                {:else}
-                  <button class="btn-ghost" id="dl-{MAIN}" on:click={downloadMovie}
-                          disabled={busy || playsUsedUp}>
-                    <DownloadIcon />
-                    <span>{preparingDownload === MAIN ? 'Preparing' : 'Download'}</span>
-                    {#if playLimit}<span class="btn__aside">1 play</span>{/if}
-                  </button>
-                {/if}
+                <button class="btn-ghost" id="dl-{MAIN}" on:click={() => rowDownload(MAIN, downloadMovie)}
+                        disabled={busy || playsUsedUp} aria-expanded={lastPlay ? confirmingDownload === MAIN : undefined}>
+                  <DownloadIcon />
+                  <span>{preparingDownload === MAIN ? 'Preparing' : 'Download'}</span>
+                  {#if playLimit}<span class="btn__aside">1 play</span>{/if}
+                </button>
               {/if}
 
               {#if $castApiReady}
@@ -1186,6 +1228,15 @@
                   </button>
                 {/if}
               {/if}
+
+              <!-- On a line of its own under the row, so the row keeps its shape. -->
+              {#if confirmingDownload === MAIN}
+                <div class="confirm" role="group" aria-labelledby="confirm-main">
+                  <p class="confirm__q" id="confirm-main">Downloading uses the last play. The link can’t be streamed afterwards.</p>
+                  <button class="btn-danger" use:focusOnMount on:keydown={escapeTo(MAIN)} on:click={downloadMovie}>Download it</button>
+                  <button class="btn-ghost" on:keydown={escapeTo(MAIN)} on:click={() => keepPlay(MAIN)}>Keep</button>
+                </div>
+              {/if}
             </div>
 
             {#if movieWatched}
@@ -1194,7 +1245,7 @@
           {/if}
         {/if}
 
-        {#if playLimit || viewerLimit || countingNote || (tvNote && !$castApiReady && !needsPassword)}
+        {#if !spent && (playLimit || viewerLimit || countingNote || resumeNote || (tvNote && !$castApiReady && !needsPassword))}
           <!-- The terms, in words, next to the button that spends them. -->
           <div class="terms">
             {#if playLimit}
@@ -1213,11 +1264,14 @@
               <p class="terms__line" class:terms__line--warn={viewersFull}>{viewersLine}</p>
             {/if}
             {#if countingNote}<p class="terms__line">{countingNote}</p>{/if}
+            {#if resumeNote}<p class="terms__line">{resumeNote}</p>{/if}
             {#if tvNote && !$castApiReady && !needsPassword}<p class="terms__line">{tvNote}</p>{/if}
           </div>
         {/if}
 
-        {#if playError}<p class="msg msg--error" role="alert">{playError}</p>{/if}
+        <!-- On a spent page the statement above has the last word; an error from
+             before the TV let go would only repeat it. -->
+        {#if playError && !spent}<p class="msg msg--error" role="alert">{playError}</p>{/if}
         {#if $subtitlesDropped}
           <p class="msg" role="status">Casting without subtitles: the TV wouldn’t take the track.</p>
         {/if}
@@ -1247,6 +1301,17 @@
                 {#each episodes as episode (episode.id)}
                   {@const seen = watchedFraction(progress.items[episode.id])}
                   <li class="eprow">
+                    {#if spent}
+                      <!-- Nothing left to play it with: the list stays, as a record. -->
+                      <div class="ep ep--static">
+                        <span class="ep__no">{episodeLabel(episode)}</span>
+                        <span class="ep__name">{episode.name}</span>
+                        <span class="ep__end">
+                          {#if seen >= 1}<span class="ep__watched"><CheckIcon title="Watched" /></span>{/if}
+                          {#if episode.runtimeSeconds}<span class="ep__len">{formatDuration(episode.runtimeSeconds)}</span>{/if}
+                        </span>
+                      </div>
+                    {:else}
                     <button class="ep"
                             class:ep--casting={$castConnected && castingEpisodeId === episode.id}
                             disabled={busy || playsUsedUp}
@@ -1278,9 +1343,10 @@
                         {/if}
                       </span>
                     </button>
-                    {#if shareInfo.allowDownload}
-                      <button class="ep__dl" id="dl-{episode.id}" on:click={() => downloadEpisode(episode)}
-                              disabled={busy || playsUsedUp}
+                    {/if}
+                    {#if shareInfo.allowDownload && !spent}
+                      <button class="ep__dl" id="dl-{episode.id}" on:click={() => rowDownload(episode.id, () => downloadEpisode(episode))}
+                              disabled={busy || playsUsedUp} aria-expanded={lastPlay ? confirmingDownload === episode.id : undefined}
                               aria-label="Download {episodeLabel(episode)}: {episode.name}{playLimit ? ' (uses a play)' : ''}">
                         {#if preparingDownload === episode.id}
                           <span class="meter meter--dot" aria-hidden="true"></span>
@@ -1297,7 +1363,7 @@
                       </div>
                     {/if}
                     {#if seen > 0}
-                      <!-- How much of the episode this browser has seen. -->
+                      <!-- How much of the episode has been seen on this link. -->
                       <span class="ep__seen" class:ep__seen--done={seen >= 1}
                             style="transform: scaleX({seen})" aria-hidden="true"></span>
                     {/if}
@@ -1469,6 +1535,15 @@
   }
 
   .plate__title--long { font-size: var(--text-display-s); }
+
+  /* The season under the show's name: a second line of the title, not a label. */
+  .plate__sub {
+    margin-bottom: var(--space-sm);
+    font-family: var(--font-display);
+    font-size: var(--text-lg);
+    line-height: 1.1;
+    color: var(--color-ink-2);
+  }
 
   .caption {
     font-family: var(--font-outlier);
@@ -1715,9 +1790,11 @@
     flex-basis: 100%;
   }
 
+  /* The paragraph takes the whole line so the buttons wrap below it; the
+     measure applies to its text, not to the flex item. */
   .confirm__q {
     flex-basis: 100%;
-    max-width: var(--measure);
+    padding-inline-end: max(0px, calc(100% - var(--measure)));
     font-size: var(--text-sm);
     color: var(--color-ink);
   }
@@ -1875,6 +1952,24 @@
   .ep:active:not(:disabled) { transform: translateY(1px); }
 
   .ep:disabled { opacity: 0.55; cursor: not-allowed; }
+
+  .ep--static { cursor: default; }
+
+  /* A spent link: the statement leads where the button stood. */
+  .spent {
+    display: grid;
+    gap: var(--space-2xs);
+    max-width: var(--measure);
+  }
+
+  .spent__head {
+    font-family: var(--font-display);
+    font-size: var(--text-lg);
+    line-height: 1.15;
+    color: var(--color-ink);
+  }
+
+  .spent__next { color: var(--color-ink-2); }
 
   .ep--casting .ep__no { color: var(--color-accent); }
 

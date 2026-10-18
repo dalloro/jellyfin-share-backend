@@ -47,6 +47,21 @@ func NewShareProgress(shareItemID string, rows []ItemProgress) ShareProgress {
 	return p
 }
 
+// MinResumeSecs is where a position starts to count. Under it the viewer has
+// barely started - web/src/progress.js uses the same floor before it offers to
+// resume - and a report that low must not replace a real one.
+const MinResumeSecs = 10
+
+// ReplacesProgress says whether a new position should take the place of the
+// stored one. A brief start - a mis-tap, a play from the top that was stopped
+// at once - would otherwise wipe where everyone holding the link had got to,
+// or that they had watched it to the end. Past the floor, the latest report
+// wins as usual, so starting over really does start over. database.SaveProgress
+// applies the same rule inside its upsert; change both together.
+func ReplacesProgress(stored *ItemProgress, newPos int64) bool {
+	return stored == nil || newPos >= MinResumeSecs || stored.PositionSecs < MinResumeSecs
+}
+
 // maxDurationSecs bounds what a page may claim an item lasts. The value comes
 // from the client; a week is longer than anything a library holds, and keeps
 // the number inside the database's INTEGER columns.

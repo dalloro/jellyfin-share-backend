@@ -98,6 +98,10 @@ func (h *PublicHandler) enrichShareInfo(info *models.SharePublicInfo, item *jell
 		info.Year = item.ProductionYear
 	}
 
+	if item.Type == "Season" {
+		info.SeriesName = item.SeriesName
+	}
+
 	// Tagline
 	if len(item.Taglines) > 0 {
 		info.Tagline = item.Taglines[0]
@@ -789,6 +793,8 @@ func (h *PublicHandler) recordProgress(ctx context.Context, session *models.Shar
 	if !ok {
 		return
 	}
+	// SaveProgress applies models.ReplacesProgress: a brief start does not
+	// replace where the link was really left.
 	if err := h.db.SaveProgress(ctx, session.ShareID, session.JellyfinItemID.String, pos, dur); err != nil {
 		log.Printf("Failed to save progress: %v", err)
 	}

@@ -63,6 +63,29 @@ func TestMayRecordProgress(t *testing.T) {
 	}
 }
 
+func TestReplacesProgress(t *testing.T) {
+	at := func(pos int64) *ItemProgress { return &ItemProgress{PositionSecs: pos, DurationSecs: 3600} }
+	cases := []struct {
+		name   string
+		stored *ItemProgress
+		newPos int64
+		want   bool
+	}{
+		{"nothing stored yet", nil, 2, true},
+		{"moving on", at(600), 700, true},
+		{"going back past the floor", at(600), 30, true},
+		{"a brief start from 0", at(600), 2, false},
+		{"a brief start over a watched item", at(3600), 4, false},
+		{"brief over brief", at(3), 6, true},
+		{"exactly at the floor", at(600), MinResumeSecs, true},
+	}
+	for _, c := range cases {
+		if got := ReplacesProgress(c.stored, c.newPos); got != c.want {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 func TestReportedProgress(t *testing.T) {
 	n := func(v int64) *int64 { return &v }
 	cases := []struct {

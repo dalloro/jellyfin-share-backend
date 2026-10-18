@@ -45,8 +45,12 @@ export async function loadProgress(token) {
 // are right the moment the player closes, without waiting for a reload. The
 // server is told separately, by the player's heartbeats. Returns a new record
 // so the caller stays reactive.
+// A brief start does not replace a real position - the server keeps the same
+// rule, so the page shows what everyone else will see.
 export function noteProgress(current, itemKey, position, duration) {
   if (!itemKey || !(duration > 0)) return current;
+  const stored = current.items[itemKey];
+  if (stored && position < MIN_RESUME_SECONDS && stored.position >= MIN_RESUME_SECONDS) return current;
   return {
     last: itemKey,
     items: {
