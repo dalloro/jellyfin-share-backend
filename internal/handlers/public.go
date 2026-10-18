@@ -765,6 +765,7 @@ func (h *PublicHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	if err := h.db.UpdateSessionHeartbeat(r.Context(), sessionID, req.PositionSeconds); err != nil {
 		log.Printf("Failed to update heartbeat: %v", err)
 	}
+	h.recordProgress(r.Context(), session, share, req)
 
 	// Update share activity
 	h.db.UpdateLastActivity(r.Context(), session.ShareID)
@@ -772,6 +773,41 @@ func (h *PublicHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, models.HeartbeatResponse{
 		Status: "ok",
 	})
+}
+
+// recordProgress keeps what a playing session reported as the link's progress,
+// against the item the session is pinned to - never an item the request names -
+// and only while models.MayRecordProgress allows it.
+// Casting reports through the same calls: the page sends the receiver's
+// position with its heartbeats, and AirPlay plays through the page's own video
+// element, so both land here.
+func (h *PublicHandler) recordProgress(ctx context.Context, session *models.ShareSession, share *models.Share, req models.HeartbeatRequest) {
+	if !models.MayRecordProgress(session, share) {
+		return
+	}
+	pos, dur, ok := models.ReportedProgress(req.PositionSeconds, req.DurationSeconds)
+	if !ok {
+		return
+	}
+	if err := h.db.SaveProgress(ctx, session.ShareID, session.JellyfinItemID.String, pos, dur); err != nil {
+		log.Printf("Failed to save progress: %v", err)
+	}
+}
+
+// GetShareProgress answers where the link's viewers left off, for the film or
+// for each episode. Like the episode list, it needs the password first.
+func (h *PublicHandler) GetShareProgress(w http.ResponseWriter, r *http.Request) {
+	share, ok := h.publicShare(w, r)
+	if !ok {
+		return
+	}
+	rows, err := h.db.GetProgress(r.Context(), share.ID)
+	if err != nil {
+		log.Printf("Failed to get progress: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to get progress")
+		return
+	}
+	writeJSON(w, http.StatusOK, models.NewShareProgress(share.JellyfinItemID, rows))
 }
 
 func (h *PublicHandler) FinishPlayback(w http.ResponseWriter, r *http.Request) {
@@ -789,6 +825,14 @@ func (h *PublicHandler) FinishPlayback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !session.FinishedAt.Valid {
+		// The last position the page knew, sent as it leaves. Optional: a page
+		// that closed without it keeps the progress from its last heartbeat.
+		var req models.HeartbeatRequest
+		if json.NewDecoder(r.Body).Decode(&req) == nil {
+			share, _ := h.db.GetShareByID(r.Context(), session.ShareID)
+			h.recordProgress(r.Context(), session, share, req)
+		}
+
 		if err := h.db.FinishSession(r.Context(), sessionID, models.TerminationReasonNormal); err != nil {
 			log.Printf("Failed to finish session: %v", err)
 		}

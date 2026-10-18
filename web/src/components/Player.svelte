@@ -107,15 +107,49 @@
   // credits were cut off at, including by the report made on teardown.
   let finished = false;
 
-  function reportProgress() {
-    if (!onProgress || !videoElement) return;
+  // Where playback stands, or null while there is nothing worth keeping. The
+  // same answer goes to the page and, with the heartbeats, to the server.
+  // During AirPlay the element keeps playing here and mirrors the Apple TV, so
+  // its position is the TV's.
+  function currentProgress() {
+    if (!videoElement) return null;
     const duration = videoElement.duration;
     // A stream that has not loaded yet reports 0 or NaN; saving that would wipe
     // the position the viewer is resuming from.
-    if (!(duration > 0) || !Number.isFinite(duration)) return;
-    if (!finished && !(videoElement.currentTime > 0)) return;
+    if (!(duration > 0) || !Number.isFinite(duration)) return null;
+    if (!finished && !(videoElement.currentTime > 0)) return null;
+    return { position: finished ? duration : videoElement.currentTime, duration };
+  }
+
+  // The server takes whole seconds.
+  function progressBody() {
+    const p = currentProgress();
+    return p ? { positionSeconds: Math.floor(p.position), durationSeconds: Math.round(p.duration) } : {};
+  }
+
+  function reportProgress() {
+    const p = currentProgress();
+    if (!onProgress || !p) return;
     lastReportAt = Date.now();
-    onProgress(itemKey, finished ? duration : videoElement.currentTime, duration);
+    onProgress(itemKey, p.position, p.duration);
+  }
+
+  // The tab is closing or going to the background, where a phone may never
+  // wake it again: the exact position goes to the server now rather than with
+  // the next heartbeat, which may never come. A beacon survives the page going.
+  // It is a heartbeat, not a finish - a tab that comes back keeps playing.
+  // Closing a tab fires both pagehide and the visibility change; one beacon does.
+  let lastBeaconAt = 0;
+
+  function saveBeforeLeaving() {
+    reportProgress();
+    const body = progressBody();
+    if (!sessionId || body.durationSeconds == null || Date.now() - lastBeaconAt < 1000) return;
+    lastBeaconAt = Date.now();
+    // Sent as plain text: a typed Blob is not CORS-safelisted, which some
+    // browsers have refused for beacons. The server reads the body as JSON
+    // whatever its type.
+    navigator.sendBeacon?.(`/api/public/sessions/${sessionId}/heartbeat`, JSON.stringify(body));
   }
 
   // ---- Next episode ----
@@ -269,9 +303,7 @@
         const response = await fetch(`/api/public/sessions/${sessionId}/heartbeat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            positionSeconds: Math.floor(videoElement?.currentTime || 0)
-          }),
+          body: JSON.stringify(progressBody()),
           credentials: 'include'
         });
 
@@ -292,6 +324,7 @@
     // First: hls.destroy() below detaches the media, after which the element no
     // longer knows its duration and the position cannot be saved.
     reportProgress();
+    const finalProgress = progressBody();
 
     if (heartbeatInterval) {
       clearInterval(heartbeatInterval);
@@ -308,7 +341,11 @@
       try {
         await fetch(`/api/public/sessions/${sessionId}/finish`, {
           method: 'POST',
-          credentials: 'include'
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(finalProgress),
+          credentials: 'include',
+          // A closing tab still delivers it.
+          keepalive: true
         });
       } catch (e) {
         console.error('Failed to notify session end:', e);
@@ -425,9 +462,9 @@
      never runs; pagehide is the last moment the page is still there to save the
      exact position. A tab sent to the background on a phone may never come
      back, which is what the visibility change covers. -->
-<svelte:window on:keydown={handleKeydown} on:pagehide={reportProgress}
+<svelte:window on:keydown={handleKeydown} on:pagehide={saveBeforeLeaving}
                on:mousemove={wake} on:touchstart={wake} />
-<svelte:document on:visibilitychange={() => document.visibilityState === 'hidden' && reportProgress()} />
+<svelte:document on:visibilitychange={() => document.visibilityState === 'hidden' && saveBeforeLeaving()} />
 
 <div class="player" class:player--idle={idle}>
   <!-- The video is the page. Chrome floats over it and gets out of the way.

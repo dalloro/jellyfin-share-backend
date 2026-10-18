@@ -8,8 +8,8 @@
   import BrandMark from './BrandMark.svelte';
   import { initCast, ensureCastSession, loadOnCast, stopCast, describeCastError, onCastEnded,
            toBcp47, languageName, subtitlesDropped, castApiReady, castConnected,
-           castDeviceName, tvHint } from '../cast.js';
-  import { MAIN, loadProgress, saveProgress, resumePosition, seriesResumeTarget,
+           castDeviceName, castProgress, tvHint } from '../cast.js';
+  import { MAIN, emptyProgress, loadProgress, noteProgress, resumePosition, seriesResumeTarget,
            watchedFraction, isWatched, formatClock } from '../progress.js';
   import { fullscreenElement, exitFullscreen } from '../fullscreen.js';
 
@@ -43,11 +43,67 @@
   // Where the player starts, when resuming.
   let startPosition = 0;
 
-  // ---- Where the viewer left off (this browser only; see progress.js) ----
-  let progress = loadProgress(token);
+  // ---- Where the link's viewers left off (kept on the server; see progress.js) ----
+  let progress = emptyProgress();
+  let progressRequested = false;
+  // Bumped by every update the page makes itself, so a server reply that set
+  // off before one of them cannot set the page back when it lands.
+  let progressVersion = 0;
+  // The first read. A start waits for it: starting before it would begin at 0,
+  // and the next heartbeat would overwrite the position the link was left at.
+  let firstProgress = null;
+  // Whether a reply from the server has been taken in yet. Until then the page's
+  // own copy holds only what was played here, which is newer than anything the
+  // server could say about those items.
+  let progressLoaded = false;
 
   function recordProgress(key, position, duration) {
-    progress = saveProgress(token, progress, key, position, duration);
+    progressVersion += 1;
+    progress = noteProgress(progress, key, position, duration);
+  }
+
+  // Read on open, or once the password is in - a locked link answers nothing.
+  $: if (!needsPassword && !progressRequested) {
+    progressRequested = true;
+    firstProgress = refreshProgress();
+  }
+
+  // Never while the player is open: the page's own copy is ahead of the
+  // server's there.
+  async function refreshProgress() {
+    const version = progressVersion;
+    const record = await loadProgress(token);
+    // Keep what the page has when the read failed. Before the first reply is in,
+    // a local update in the meantime is no reason to drop it: the merge below
+    // already puts the page's own items over the server's.
+    if (!record || isPlaying || (progressLoaded && version !== progressVersion)) return;
+    progress = progressLoaded
+      ? record
+      : { last: progress.last || record.last, items: { ...record.items, ...progress.items } };
+    progressLoaded = true;
+  }
+
+  // Set while a start waits for the first read, so every control that spends a
+  // play is held meanwhile - a second tap would otherwise start a second play.
+  let awaitingProgress = false;
+
+  // Runs a start once the first read is in, but waits no longer than a few
+  // seconds: a slow server must not hold the Play button hostage.
+  async function afterProgress(start) {
+    if (busy) return;
+    awaitingProgress = true;
+    try {
+      await Promise.race([firstProgress, new Promise((resolve) => setTimeout(resolve, 3000))]);
+    } finally {
+      awaitingProgress = false;
+    }
+    return start();
+  }
+
+  // Back on the tab after watching elsewhere - another device, or the same link
+  // on a TV - the page picks up what was watched meanwhile.
+  function handleVisibility() {
+    if (document.visibilityState === 'visible' && !needsPassword && !isPlaying) refreshProgress();
   }
 
   $: movieResumeAt = resumePosition(progress.items[MAIN]);
@@ -264,6 +320,7 @@
     passwordInput = '';
     needsPassword = false;
     episodesRequested = false;
+    progressRequested = false;
     focusPlayWhenReady = isSeasonOrSeries;
     await tick();
     if (!isSeasonOrSeries) playButton?.focus();
@@ -351,29 +408,55 @@
   let casting = false;
   let castHeartbeat = null;
   let castSessionId = null;
+  // What the receiver is playing: its progress key, and the runtime to fall back
+  // on until the receiver reports one.
+  let castPlaying = null;
+
+  // Where the receiver stands, or null while it has nothing worth keeping - an
+  // idle or reset receiver must not wind the link back to 0. `ended` counts the
+  // item as watched to the end. noteCast acts on what this returns.
+  function castSnapshot({ ended = false } = {}) {
+    if (!castPlaying) return null;
+    const remote = castProgress();
+    if (!ended && !remote) return null;
+    const duration = remote?.duration || castPlaying.duration;
+    if (!(duration > 0)) return null;
+    return { key: castPlaying.key, position: ended ? duration : remote.position, duration };
+  }
+
+  // Moves the page's own copy to the receiver's position, so the episode list
+  // follows the TV, and returns it as the server takes it.
+  function noteCast(snapshot) {
+    if (!snapshot) return {};
+    recordProgress(snapshot.key, snapshot.position, snapshot.duration);
+    return { positionSeconds: Math.floor(snapshot.position), durationSeconds: Math.round(snapshot.duration) };
+  }
   // Which episode is on the receiver, so the list can mark it.
   let castingEpisodeId = null;
 
   // Releases the session server-side rather than leaving it to the stale-session
   // reaper, which would hold a concurrent-viewer slot for the timeout's duration.
   async function endCastSession() {
+    // Read before stopping: once the receiver lets go it no longer knows.
+    const last = noteCast(castSnapshot());
     stopCast();
     castingEpisodeId = null;
-    await finishCastSession();
+    await finishCastSession(last);
   }
 
   // Releases the session but leaves the device connected, so the next episode can
   // start without opening the picker again.
-  async function finishCastSession() {
+  async function finishCastSession(last = {}) {
     stopCastHeartbeat();
     const id = castSessionId;
     castSessionId = null;
+    castPlaying = null;
     if (!id) return;
     try {
       await fetch(`/api/public/sessions/${id}/finish`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify(last),
         credentials: 'include'
       });
     } catch (e) {
@@ -392,7 +475,7 @@
         const response = await fetch(`/api/public/sessions/${sessionId}/heartbeat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
+          body: JSON.stringify(noteCast(castSnapshot())),
           credentials: 'include'
         });
         if (!response.ok) stopCastHeartbeat();
@@ -420,6 +503,8 @@
   // it, where HEVC depends on the model. Going through /play once keeps this to a
   // single play against the share's limit.
   async function castItem({ playPath, title, subtitle, durationSeconds, episodeId = null, startTime = 0, charged = true }) {
+    // One at a time: each run ends in a /play, and a second one is a second play.
+    if (casting) return;
     playError = '';
     casting = true;
     try {
@@ -430,7 +515,7 @@
       // A receiver plays one thing at a time. Switching episodes without releasing
       // the previous session would leave it holding a concurrent-viewer slot until
       // the stale-session reaper gets to it.
-      await finishCastSession();
+      await finishCastSession(noteCast(castSnapshot()));
 
       const response = await fetch(playPath, {
         method: 'POST',
@@ -457,6 +542,7 @@
       });
       castSessionId = data.sessionId;
       castingEpisodeId = episodeId;
+      castPlaying = { key: episodeId || MAIN, duration: durationSeconds || 0 };
       startCastHeartbeat(data.sessionId);
     } catch (e) {
       // A dismissed picker is not a failure.
@@ -467,13 +553,13 @@
   }
 
   function startCast() {
-    return castItem({
+    return afterProgress(() => castItem({
       playPath: `/api/public/shares/${token}/play${trackQuery('h264')}`,
       title: shareInfo.title,
       subtitle: shareInfo.year ? String(shareInfo.year) : '',
       durationSeconds: shareInfo.runtimeSeconds,
-      startTime: movieResumeAt
-    });
+      startTime: resumePosition(progress.items[MAIN])
+    }));
   }
 
   function castEpisode(episode, { continues, startTime = 0 } = {}) {
@@ -529,13 +615,13 @@
     return `/api/public/shares/${token}/episodes/${episodeId}/play${query}`;
   }
 
-  async function finishSession(sessionId) {
+  async function finishSession(sessionId, last = {}) {
     if (!sessionId) return;
     try {
       await fetch(`/api/public/sessions/${sessionId}/finish`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify(last),
         credentials: 'include'
       });
     } catch (e) {
@@ -561,8 +647,13 @@
 
     // Release the finished session before asking for the next one. A share
     // limited to one concurrent viewer would otherwise refuse its own sequel.
+    // The player marked the episode watched as it ended; its own finish call
+    // would arrive at a session already closed here, so this one carries it.
     const previous = playbackData?.sessionId;
-    await finishSession(previous);
+    const ended = progress.items[currentEpisodeId];
+    await finishSession(previous, ended
+      ? { positionSeconds: Math.floor(ended.position), durationSeconds: Math.round(ended.duration) }
+      : {});
 
     try {
       const response = await fetch(episodePlayPath(next.id, { continues: previous }), {
@@ -597,14 +688,18 @@
 
   // Autoplay on the receiver. Reading castSessionId before castEpisode runs
   // matters: it releases the old session and clears the field on the way.
+  // It ran out on the TV, so it counts as watched to the end.
   async function advanceCast() {
     const next = nextEpisode(castingEpisodeId);
     console.debug('Cast: episode finished', castingEpisodeId, '-> next', next?.id || 'none');
+    const previous = castSessionId;
+    await finishCastSession(noteCast(castSnapshot({ ended: true })));
     if (!next) {
-      await endCastSession();
+      stopCast();
+      castingEpisodeId = null;
       return;
     }
-    await castEpisode(next, { continues: castSessionId });
+    await castEpisode(next, { continues: previous });
   }
 
   // What is being started (MAIN or an episode id). Every way of starting is
@@ -612,7 +707,7 @@
   let starting = null;
   // Starting, casting or preparing a download: each spends from the same budget,
   // so while one is in flight every control that spends is held.
-  $: busy = starting !== null || casting || preparingDownload !== null;
+  $: busy = starting !== null || casting || preparingDownload !== null || awaitingProgress;
 
   async function startPlayback(startAt = 0) {
     if (starting) return;
@@ -682,6 +777,9 @@
     currentPlayingTitle = '';
     currentEpisodeId = null;
     startPosition = 0;
+    // The first read may have landed while the player was open and been set
+    // aside; without it the other episodes would show nothing.
+    if (!progressLoaded) refreshProgress();
   }
 
   // An episode row, or the series' main button: on the receiver when one is
@@ -693,9 +791,23 @@
   }
 
   // The series' main button: resume where the viewer was, or start at the top.
+  // Each reads the record itself once the wait is over, rather than a reactive
+  // value that may not have caught up with it yet.
   function playSeries() {
-    if (seriesResume) return playEpisode(seriesResume.episode, seriesResume.position);
-    if (episodes.length) return playEpisode(episodes[0]);
+    return afterProgress(() => {
+      const target = seriesResumeTarget(progress, episodes);
+      if (target) return playEpisode(target.episode, target.position);
+      if (episodes.length) return playEpisode(episodes[0]);
+    });
+  }
+
+  // An episode row: where that episode was left.
+  function resumeEpisode(episode) {
+    return afterProgress(() => playEpisode(episode, resumePosition(progress.items[episode.id])));
+  }
+
+  function playMovie() {
+    return afterProgress(() => startPlayback(resumePosition(progress.items[MAIN])));
   }
 
   // ---- Downloads ----
@@ -821,6 +933,7 @@
   $: foldImage = shareInfo.backdropUrl || shareInfo.posterUrl || '';
 </script>
 <svelte:head><title>{shareInfo.title} · Jellyfin Share</title></svelte:head>
+<svelte:document on:visibilitychange={handleVisibility} />
 
 <div class="share">
   {#if isPlaying && playbackData}
@@ -1019,7 +1132,7 @@
           {:else}
             <div class="play">
               <button class="btn-primary btn-primary--lg" bind:this={playButton}
-                      on:click={() => startPlayback(movieResumeAt)}
+                      on:click={playMovie}
                       disabled={busy || playsUsedUp}>
                 {#if starting === MAIN}
                   <span class="meter meter--inline" aria-hidden="true"></span>
@@ -1137,7 +1250,7 @@
                     <button class="ep"
                             class:ep--casting={$castConnected && castingEpisodeId === episode.id}
                             disabled={busy || playsUsedUp}
-                            on:click={() => playEpisode(episode, resumePosition(progress.items[episode.id]))}>
+                            on:click={() => resumeEpisode(episode)}>
                       <span class="sr-only">{$castConnected ? `Play on ${$castDeviceName}:` : 'Play'}</span>
                       <span class="ep__no">
                         {#if episode.seasonNumber}S{episode.seasonNumber}E{episode.indexNumber || '?'}{:else}{episode.indexNumber || '?'}{/if}

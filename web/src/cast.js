@@ -148,6 +148,7 @@ export async function loadOnCast({ url, title, subtitle, posterUrl, subtitleUrl,
   // HLS delivered as mpegts segments; the receiver is told so explicitly rather
   // than left to sniff it from the extension.
   const info = new chrome.cast.media.MediaInfo(abs(url), 'application/x-mpegURL');
+  loadedContentId = info.contentId;
   info.streamType = chrome.cast.media.StreamType.BUFFERED;
   if (durationSeconds) info.duration = durationSeconds;
 
@@ -221,7 +222,11 @@ export async function loadOnCast({ url, title, subtitle, posterUrl, subtitleUrl,
 let endedHandler = null;
 let lastEndedMediaId = null;
 
-function reportEnded(mediaSessionId) {
+function reportEnded(mediaSessionId, contentId) {
+  // Only what this page put on the receiver. Media another device loaded onto
+  // the same TV running out says nothing about this link - and advancing would
+  // mark this link's episode watched and load the next one over theirs.
+  if (!loadedContentId || contentId !== loadedContentId) return;
   // The end can be reported by both routes, and a state can repeat. Advancing
   // twice would skip an episode, so each media session ends the series once.
   if (mediaSessionId != null && mediaSessionId === lastEndedMediaId) return;
@@ -229,8 +234,31 @@ function reportEnded(mediaSessionId) {
   if (endedHandler) endedHandler();
 }
 
+// The SDK keeps this in step with the receiver: its state, and where it is in
+// what it plays.
+let remotePlayer = null;
+// What this page last put on the receiver. The default receiver is shared, so
+// another device can load something else onto the same TV; its position says
+// nothing about this link.
+let loadedContentId = null;
+
+/**
+ * Where the receiver is in what it plays, for the page's cast heartbeats - on a
+ * TV the receiver is the player, so only it knows. Null unless it is actually
+ * playing something: an idle receiver, or one that let go, reads 0, which is
+ * not a position anyone stopped at.
+ */
+export function castProgress() {
+  const p = remotePlayer;
+  if (!p?.isConnected || !p.isMediaLoaded || p.playerState === chrome.cast.media.PlayerState.IDLE) return null;
+  if (!loadedContentId || p.mediaInfo?.contentId !== loadedContentId) return null;
+  if (!(p.currentTime > 0)) return null;
+  return { position: p.currentTime, duration: p.duration > 0 && Number.isFinite(p.duration) ? p.duration : null };
+}
+
 function watchPlayer() {
   const player = new cast.framework.RemotePlayer();
+  remotePlayer = player;
   const controller = new cast.framework.RemotePlayerController(player);
   controller.addEventListener(
     cast.framework.RemotePlayerEventType.PLAYER_STATE_CHANGED,
@@ -241,7 +269,7 @@ function watchPlayer() {
       // stopped, or a receiver that was disconnected. Only the first advances.
       console.debug('Cast: receiver idle', media?.idleReason);
       if (media?.idleReason !== chrome.cast.media.IdleReason.FINISHED) return;
-      reportEnded(media.mediaSessionId);
+      reportEnded(media.mediaSessionId, media.media?.contentId);
     }
   );
 }
@@ -251,7 +279,7 @@ function watchMedia(session) {
   if (!media) return;
   const id = media.mediaSessionId;
   media.addUpdateListener(() => {
-    if (media.idleReason === chrome.cast.media.IdleReason.FINISHED) reportEnded(id);
+    if (media.idleReason === chrome.cast.media.IdleReason.FINISHED) reportEnded(id, media.media?.contentId);
   });
 }
 

@@ -43,10 +43,10 @@ at, whether it is still live, how often it has been played, and when it expires.
 - **Downloads** - The original file of a film or episode, or a whole season or
   series as one ZIP filed by season. Each download counts as one play; whoever
   shares a link can switch downloads off for it
-- **Resume and Next Episode** - The page remembers in the viewer's browser where
-  they stopped, offers to resume and ticks what was watched; near the end of an
-  episode a card offers the next one, which starts on its own unless the viewer
-  cancels
+- **Resume and Next Episode** - The server remembers, per link, where it was left
+  (on any device, also when watched on a TV), offers to resume and ticks what was
+  watched; near the end of an episode a card offers the next one, which starts on
+  its own unless the viewer cancels
 - **Per-Share Quality** - Cap a single link at 1080p, 720p or 480p without touching
   the library or the server settings
 - **Designed Interface** - The share page leads with the artwork Jellyfin already
@@ -256,6 +256,18 @@ GET /api/public/shares/{token}/episodes
 POST /api/public/shares/{token}/episodes/{episodeId}/play
 ```
 
+#### Progress
+```http
+GET /api/public/shares/{token}/progress
+```
+
+Where the link was left: `{"last": "main", "items": {"main": {"position": 88, "duration": 150}}}`,
+or `{"last": "", "items": {}}` before anything was watched. The film is keyed
+`main`, episodes by their id. Like the episode list, a password link answers only
+once the password session cookie is set. It is written by the heartbeat and finish
+calls, which take `positionSeconds` and `durationSeconds`; a report without a
+duration is not stored.
+
 #### Download
 ```http
 POST /api/public/shares/{token}/download
@@ -463,13 +475,21 @@ Jellyfin before being fixed; the numbers below are measured.
   as well. Whoever shares a link chooses whether it offers downloads (on by
   default), and the server can switch them off for every link. A download is
   always the original file: a share's quality cap applies to streaming only.
-- **Resume.** The page remembers, in the viewer's browser, where they stopped -
-  per film and per episode. It then offers *Resume* with the time beside *From the
-  start*; a series picks up on the episode last watched, or on the next one once
-  that was finished. Each episode row shows how much of it has been seen, and a
-  film or episode watched to the end is ticked. Nothing is stored server-side: a
-  link has no account behind it, and a forwarded link should not open on the
-  sender's position.
+- **Resume.** The server remembers where a link was left - per film and per
+  episode - so a film started on a phone resumes on the laptop. The page then
+  offers *Resume* with the time beside *From the start*; a series picks up on the
+  episode last watched, or on the next one once that was finished. Each episode
+  row shows how much of it has been seen, and a film or episode watched to the
+  end is ticked. The progress belongs to the link, not to a person: everyone
+  holding the same link shares it.
+  - The playing page reports its position with every heartbeat, when the tab
+    closes or goes to the background, and when playback stops.
+  - **AirPlay** plays through the page's own video element, so its position is
+    reported the same way.
+  - **Google Cast**: the page sends the receiver's position with its cast
+    heartbeats, and an episode that runs out on the TV counts as watched - as
+    long as the receiver or the library knows how long it runs. The page has to
+    stay open while casting; it already must, to keep the cast session alive.
 - **Next episode.** In an episode's last 30 seconds a card in the bottom-right
   corner names the next one. *Play now* starts it at once; left alone it starts
   when the episode ends; *Cancel* or the close button returns to the episode list.

@@ -67,8 +67,8 @@ These are in priority order. When two of them conflict, the higher one wins.
   season. Each download counts as one play, and downloads can be turned off per
   share or globally (`JFSHARE_ALLOW_DOWNLOADS`).
 - HLS proxied through the backend. Text subtitles are sent as a WebVTT sidecar.
-  Resume position and watched state live in the viewer's browser, not on the
-  server.
+  Resume position and watched state are kept on the server per link, so a
+  viewer resumes on any device; everyone holding the same link shares them.
 - Session tracking. Revoking a link ends live sessions.
 - Stack: Go backend, Svelte 4 + Vite frontend in `web/`, hls.js. Brand tokens live
   in `web/src/tokens.css`.
