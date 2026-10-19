@@ -29,6 +29,9 @@
   let showPassword = false;
   // Where focus goes once the link opens: the button that starts watching.
   let playButton;
+  // Where it goes instead when the player closes on a link with nothing left.
+  let spentNote;
+  let termsHead;
   let focusPlayWhenReady = false;
 
   $: showPasswordForm = needsPassword;
@@ -36,6 +39,8 @@
 
   let isPlaying = false;
   let playbackData = null;
+  // The player replaces the page, footer included, while this holds.
+  $: playerOpen = Boolean(isPlaying && playbackData);
   let playError = '';
   let imageLoaded = !shareInfo.posterUrl;
   let showFullCast = false;
@@ -226,11 +231,15 @@
           : 'Watching here or on a TV uses it.')
       : '';
 
-  // Resume comes from the link's shared record, which is worth saying once:
-  // the place may have been reached on another device.
-  $: resumeNote = (isSeasonOrSeries ? seriesResume && (seriesResume.position > 0 || seriesResume.isNext) : movieResumeAt > 0)
-    ? 'Picks up where this link was last left off, on any device.'
-    : '';
+  // Resume comes from the link's shared record, so the place may be someone
+  // else's, or the viewer's own on another device. It is said right at the
+  // button that offers it, which may be the first thing a new viewer sees.
+  $: resumedMidway = isSeasonOrSeries ? seriesResume?.position > 0 : movieResumeAt > 0;
+  $: resumeNote = resumedMidway
+    ? 'Where anyone with this link last stopped, on any device.'
+    : isSeasonOrSeries && seriesResume?.isNext
+      ? 'Next after the last episode anyone with this link finished.'
+      : '';
 
   $: viewersLine = !viewerLimit
     ? ''
@@ -240,9 +249,13 @@
           : `${viewerLimit} people are watching right now, the most this link allows. Playing may not start until one of them stops.`)
       : (viewerLimit === 1 ? 'One person can watch at a time.' : `Up to ${viewerLimit} people can watch at once.`);
 
-  // How a series spends plays, which is not obvious from "3 plays".
+  // How a series spends plays, which is not obvious from "3 plays": running on
+  // into the next episode, by autoplay or Play now on the card, carries the
+  // play along (see continuationOf on the server); an episode the viewer picks
+  // is a new one.
   $: countingNote = playLimit && isSeasonOrSeries
-    ? 'Episodes watched back to back count as one play.' + (shareInfo.allowDownload ? ' Each download uses one.' : '')
+    ? 'When an episode runs on into the next, or you take Play now at its end, that is still one play. Starting an episode yourself uses one.' +
+      (shareInfo.allowDownload ? ' So does each download.' : '')
     : '';
 
   $: tvNote = tvHint();
@@ -733,8 +746,7 @@
       });
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
-        playError = refusal(response.status, data.error, 'next');
-        handlePlayerClose();
+        nextFailed(refusal(response.status, data.error, 'next'), previous, next);
         return;
       }
       startPosition = 0;
@@ -751,9 +763,24 @@
       currentEpisodeId = next.id;
       currentPlayingTitle = `${episodeLabel(next)}: ${next.name}`;
     } catch (e) {
-      playError = OFFLINE;
-      handlePlayerClose();
+      nextFailed(OFFLINE, previous, next);
     }
+  }
+
+  // The next episode did not start. A player still open on the episode that
+  // ended closes and says so, with focus on the episode that did not start:
+  // the one to retry. If the viewer already left the player, it is still said,
+  // unless they have started something else meanwhile - another player, one
+  // still starting, a download, or the TV - which is what the page is about now.
+  function nextFailed(message, previous, next) {
+    if (playbackData) {
+      if (playbackData.sessionId !== previous) return;
+      playError = message;
+      handlePlayerClose(next.id);
+      return;
+    }
+    if (busy || castSessionId) return;
+    playError = message;
   }
 
   // Autoplay on the receiver. Reading castSessionId before castEpisode runs
@@ -841,7 +868,7 @@
   // belongs to the page, and the episode list has no business filling the
   // screen. Autoplay swaps the player without coming through here, so
   // fullscreen survives the move to the next episode.
-  function handlePlayerClose() {
+  async function handlePlayerClose(focusEpisodeId = currentEpisodeId) {
     if (fullscreenElement()) exitFullscreen();
     isPlaying = false;
     playbackData = null;
@@ -851,6 +878,15 @@
     // The first read may have landed while the player was open and been set
     // aside; without it the other episodes would show nothing.
     if (!progressLoaded) refreshProgress();
+    // The page is rebuilt as the player goes, and the control that had focus
+    // goes with the player, so focus would fall to the top of the document.
+    // It goes back to what was playing: the episode's row, or Play - or, once
+    // that was the last play, the statement saying so (or, with a TV still
+    // holding the controls, the terms saying it).
+    await tick();
+    // A disabled control cannot take focus, so the first that can is used.
+    [focusEpisodeId && document.getElementById(`ep-${focusEpisodeId}`), playButton, spentNote, termsHead]
+      .find((el) => el && !el.disabled)?.focus();
   }
 
   // An episode row, or the series' main button: on the receiver when one is
@@ -969,7 +1005,7 @@
       : `Downloading ${thing} uses one of the ${plural(playsLeft, 'play')} left.`;
   }
 
-  // Escape inside a confirm is "Keep".
+  // Escape inside a confirm is "Don’t download".
   const escapeTo = (key) => (e) => { if (e.key === 'Escape') keepPlay(key); };
 
   // Moves focus to the element the moment it appears: a confirm, so a keyboard
@@ -1037,8 +1073,8 @@
 <svelte:head><title>{[displayTitle, subTitle].filter(Boolean).join(' · ')} · Jellyfin Share</title></svelte:head>
 <svelte:document on:visibilitychange={handleVisibility} />
 
-<div class="share">
-  {#if isPlaying && playbackData}
+<main>
+  {#if playerOpen}
     <!-- Keyed on the session: autoplay swaps in the next episode, and the player
          has to be rebuilt around it rather than handed a new URL mid-flight. -->
     {#key playbackData.sessionId}
@@ -1050,12 +1086,14 @@
               progressKey={currentEpisodeId || MAIN}
               {playsLeft}
               onProgress={recordProgress}
-              on:close={handlePlayerClose} on:ended={handlePlaybackEnded}
+              on:close={() => handlePlayerClose()} on:ended={handlePlaybackEnded}
               on:next={handlePlaybackEnded} />
     {/key}
   {:else}
-    <!-- ── The photographic fold. The artwork fills it; the type is annotation. ── -->
-    <section class="fold" class:fold--bare={!foldImage}>
+    <!-- ── The photographic fold. The artwork fills it; the type is annotation.
+         Locked, it gives way on a phone: the password field, not the picture,
+         is what the page needs to show above the keyboard. ── -->
+    <section class="fold" class:fold--bare={!foldImage} class:fold--locked={showPasswordForm && !spent}>
       {#if foldImage}
         <img class="fold__image" src={foldImage} alt="" fetchpriority="high" />
         <div class="fold__scrim"></div>
@@ -1069,7 +1107,8 @@
 
       <div class="plate">
         {#if shareInfo.logoUrl}
-          <img class="plate__logo" src="{shareInfo.logoUrl}?maxWidth=500" alt={displayTitle} />
+          <!-- The logo is the title, so it stays the page's heading. -->
+          <h1><img class="plate__logo" src="{shareInfo.logoUrl}?maxWidth=500" alt={displayTitle} /></h1>
         {:else}
           <h1 class="plate__title" class:plate__title--long={titleIsLong}>{displayTitle}</h1>
         {/if}
@@ -1092,6 +1131,8 @@
         <figure class="print">
           <img
             src="{shareInfo.posterUrl}?maxWidth=400"
+            srcset="{shareInfo.posterUrl}?maxWidth=400 400w, {shareInfo.posterUrl}?maxWidth=600 600w, {shareInfo.posterUrl}?maxWidth=800 800w"
+            sizes="(min-width: 80rem) 18rem, (min-width: 60rem) 13.5rem, (min-width: 40rem) 11rem, 1px"
             alt={displayTitle}
             class:is-loaded={imageLoaded}
             on:load={handleImageLoad}
@@ -1106,7 +1147,7 @@
                left and until when, then - if it is about to bite - what the next
                tap costs. The finer print follows below the controls. -->
           <div class="terms-head">
-            <p class="terms-head__line">
+            <p class="terms-head__line" tabindex="-1" bind:this={termsHead}>
               {#if playsHead}{playsHead} · {/if}{#if shareInfo.expiresAt}<time datetime={shareInfo.expiresAt}>{playsHead ? expiryHead : capitalised(expiryHead)}</time>{:else}{playsHead ? expiryHead : capitalised(expiryHead)}{/if}
             </p>
             {#if expiryExact}<p class="terms-head__exact">Until {expiryExact}</p>{/if}
@@ -1124,9 +1165,12 @@
 
         {#if spent}
           <!-- A spent link is a dead end and says so first - before any password,
-               which could lead nowhere: every control here could only fail. -->
+               which could lead nowhere: every control here could only fail.
+               A live region speaks when its content changes, not when it is
+               inserted with it, so on the way back from the player the page
+               focuses this sentence and it is read out that way. -->
           <div class="spent" role="status">
-            <p class="spent__head">{playLimit === 1 ? 'The one play on this link has been used.' : `All ${playLimit} plays on this link have been used.`}</p>
+            <p class="spent__head" tabindex="-1" bind:this={spentNote}>{playLimit === 1 ? 'The one play on this link has been used.' : `All ${playLimit} plays on this link have been used.`}</p>
             <p class="spent__next">Ask whoever shared it for a new link.</p>
           </div>
         {:else if showPasswordForm}
@@ -1152,20 +1196,22 @@
                         on:click={() => { showPassword = !showPassword; passwordField?.focus(); }}>
                   {showPassword ? 'Hide' : 'Show'}<span class="sr-only"> password</span>
                 </button>
-                <button type="submit" class="btn-primary" disabled={passwordLoading}>
-                  {#if passwordLoading}
-                    <span class="meter meter--inline" aria-hidden="true"></span>
-                    <span>Checking</span>
-                  {:else}
-                    <span>Unlock</span>
-                  {/if}
-                </button>
               </div>
+              <!-- Under the field it is about, above the button: on a phone the
+                   keyboard leaves room for little more than these. -->
               <p class="field__help" id="share-password-help" aria-live="polite"
                  class:field__help--error={passwordError}>
                 {passwordError || 'Whoever shared this link set a password for it.'}
               </p>
             </div>
+            <button type="submit" class="btn-primary gate__submit" disabled={passwordLoading}>
+              {#if passwordLoading}
+                <span class="meter meter--inline" aria-hidden="true"></span>
+                <span>Checking</span>
+              {:else}
+                <span>Unlock</span>
+              {/if}
+            </button>
           </form>
         {:else}
           {#if hasTracks}
@@ -1205,33 +1251,39 @@
           {#if isSeasonOrSeries}
             {#if episodes.length > 0}
               <div class="play">
-                <button class="btn-primary btn-primary--lg" bind:this={playButton} on:click={playSeries}
-                        disabled={busy || playsUsedUp}>
-                  {#if starting !== null}
-                    <span class="meter meter--inline" aria-hidden="true"></span>
-                    <span>Starting</span>
-                  {:else}
-                    <PlayIcon />
-                    {#if seriesResume?.position > 0}
-                      <span>Resume {episodeLabel(seriesResume.episode)}</span>
-                      <span class="btn__aside">{clockOf(seriesResume.position, seriesResume.episode.runtimeSeconds)}</span>
-                    {:else if seriesResume}
-                      <span>{seriesResume.isNext ? 'Continue with' : 'Play'} {episodeLabel(seriesResume.episode)}</span>
-                    {:else}
-                      <span>Play {episodeLabel(episodes[0])}</span>
-                    {/if}
-                  {/if}
-                </button>
-                {#if seriesResume?.position > 0}
-                  <button class="btn-ghost" on:click={() => afterProgress(() => {
-                            const target = seriesResumeTarget(progress, episodes);
-                            if (target) return playEpisode(target.episode);
-                          })}
+                <div class="play__lead" class:play__lead--noted={resumeNote}>
+                  <button class="btn-primary btn-primary--lg" bind:this={playButton} on:click={playSeries}
+                          aria-describedby={resumeNote ? 'resume-note' : undefined}
                           disabled={busy || playsUsedUp}>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
-                    <span>From the start<span class="sr-only">: {episodeLabel(seriesResume.episode)}</span></span>
+                    {#if starting !== null}
+                      <span class="meter meter--inline" aria-hidden="true"></span>
+                      <span>Starting</span>
+                    {:else}
+                      <PlayIcon />
+                      {#if seriesResume?.position > 0}
+                        <span>Resume {episodeLabel(seriesResume.episode)}</span>
+                        <span class="btn__aside">{clockOf(seriesResume.position, seriesResume.episode.runtimeSeconds)}</span>
+                      {:else if seriesResume}
+                        <span>{seriesResume.isNext ? 'Continue with' : 'Play'} {episodeLabel(seriesResume.episode)}</span>
+                      {:else}
+                        <span>Play {episodeLabel(episodes[0])}</span>
+                      {/if}
+                    {/if}
                   </button>
-                {/if}
+                  {#if resumeNote}
+                    <p class="play__note" class:play__note--link={resumedMidway}>
+                      <span id="resume-note">{resumeNote}</span>
+                      {#if resumedMidway}
+                        <!-- The episode it names, from 0: a restart needs no stored
+                             place, so there is nothing to wait for or recompute. -->
+                        <button class="link" on:click={() => playEpisode(seriesResume.episode)}
+                                disabled={busy || playsUsedUp}>
+                          Restart {episodeLabel(seriesResume.episode)}
+                        </button>
+                      {/if}
+                    </p>
+                  {/if}
+                </div>
                 {#if shareInfo.allowDownload}
                   <button class="btn-ghost" id="dl-all" on:click={() => rowDownload('all', downloadAll)}
                           disabled={busy || playsUsedUp} aria-expanded={playLimit ? confirmingDownload === 'all' : undefined}>
@@ -1260,7 +1312,7 @@
                   <div class="confirm" role="group" aria-labelledby="confirm-all">
                     <p class="confirm__q" id="confirm-all">{downloadCost('every episode', allBytes)}</p>
                     <button class={lastPlay ? 'btn-danger' : 'btn-primary'} use:focusOnMount on:keydown={escapeTo('all')} on:click={downloadAll}>Download it</button>
-                    <button class="btn-ghost" on:keydown={escapeTo('all')} on:click={() => keepPlay('all')}>Keep</button>
+                    <button class="btn-ghost" on:keydown={escapeTo('all')} on:click={() => keepPlay('all')}>Don’t download</button>
                   </div>
                 {/if}
               </div>
@@ -1273,29 +1325,31 @@
             {/if}
           {:else}
             <div class="play">
-              <button class="btn-primary btn-primary--lg" bind:this={playButton}
-                      on:click={playMovie}
-                      disabled={busy || playsUsedUp}>
-                {#if starting === MAIN}
-                  <span class="meter meter--inline" aria-hidden="true"></span>
-                  <span>Starting</span>
-                {:else}
-                  <PlayIcon />
-                  {#if movieResumeAt > 0}
-                    <span>Resume</span>
-                    <span class="btn__aside">{clockOf(movieResumeAt, shareInfo.runtimeSeconds)}</span>
-                  {:else}
-                    <span>Play</span>
-                  {/if}
-                {/if}
-              </button>
-              {#if movieResumeAt > 0}
-                <button class="btn-ghost" on:click={() => startPlayback()}
+              <div class="play__lead" class:play__lead--noted={resumeNote}>
+                <button class="btn-primary btn-primary--lg" bind:this={playButton}
+                        aria-describedby={resumeNote ? 'resume-note' : undefined}
+                        on:click={playMovie}
                         disabled={busy || playsUsedUp}>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
-                  <span>From the start</span>
+                  {#if starting === MAIN}
+                    <span class="meter meter--inline" aria-hidden="true"></span>
+                    <span>Starting</span>
+                  {:else}
+                    <PlayIcon />
+                    {#if movieResumeAt > 0}
+                      <span>Resume</span>
+                      <span class="btn__aside">{clockOf(movieResumeAt, shareInfo.runtimeSeconds)}</span>
+                    {:else}
+                      <span>Play</span>
+                    {/if}
+                  {/if}
                 </button>
-              {/if}
+                {#if resumeNote}
+                  <p class="play__note play__note--link">
+                    <span id="resume-note">{resumeNote}</span>
+                    <button class="link" on:click={() => startPlayback()} disabled={busy || playsUsedUp}>Start from the beginning</button>
+                  </p>
+                {/if}
+              </div>
 
               {#if shareInfo.allowDownload}
                 <button class="btn-ghost" id="dl-{MAIN}" on:click={() => rowDownload(MAIN, downloadMovie)}
@@ -1333,7 +1387,7 @@
                 <div class="confirm" role="group" aria-labelledby="confirm-main">
                   <p class="confirm__q" id="confirm-main">{downloadCost('the film', shareInfo.downloadBytes)}</p>
                   <button class={lastPlay ? 'btn-danger' : 'btn-primary'} use:focusOnMount on:keydown={escapeTo(MAIN)} on:click={downloadMovie}>Download it</button>
-                  <button class="btn-ghost" on:keydown={escapeTo(MAIN)} on:click={() => keepPlay(MAIN)}>Keep</button>
+                  <button class="btn-ghost" on:keydown={escapeTo(MAIN)} on:click={() => keepPlay(MAIN)}>Don’t download</button>
                 </div>
               {/if}
             </div>
@@ -1344,15 +1398,14 @@
           {/if}
         {/if}
 
-        {#if !spent && (viewerLimit || countingNote || resumeNote || (tvNote && !$castApiReady && !needsPassword))}
+        {#if !spent && (viewerLimit || countingNote || (tvNote && !$castApiReady))}
           <!-- The finer print: how the terms apply. -->
           <div class="terms">
             {#if viewersLine}
               <p class="terms__line" class:terms__line--warn={viewersFull}>{viewersLine}</p>
             {/if}
             {#if countingNote}<p class="terms__line">{countingNote}</p>{/if}
-            {#if resumeNote}<p class="terms__line">{resumeNote}</p>{/if}
-            {#if tvNote && !$castApiReady && !needsPassword}<p class="terms__line">{tvNote}</p>{/if}
+            {#if tvNote && !$castApiReady}<p class="terms__line">{tvNote}</p>{/if}
           </div>
         {/if}
 
@@ -1408,7 +1461,7 @@
                         </span>
                       </div>
                     {:else}
-                    <button class="ep"
+                    <button class="ep" id="ep-{episode.id}"
                             class:ep--thumb={thumb}
                             class:ep--casting={$castConnected && castingEpisodeId === episode.id}
                             disabled={busy || playsUsedUp}
@@ -1465,7 +1518,7 @@
                       <div class="confirm confirm--row" role="group" aria-labelledby="confirm-{episode.id}">
                         <p class="confirm__q" id="confirm-{episode.id}">{downloadCost(episodeLabel(episode).toLowerCase(), episode.sizeBytes)}</p>
                         <button class={lastPlay ? 'btn-danger' : 'btn-primary'} use:focusOnMount on:keydown={escapeTo(episode.id)} on:click={() => downloadEpisode(episode)}>Download it</button>
-                        <button class="btn-ghost" on:keydown={escapeTo(episode.id)} on:click={() => keepPlay(episode.id)}>Keep</button>
+                        <button class="btn-ghost" on:keydown={escapeTo(episode.id)} on:click={() => keepPlay(episode.id)}>Don’t download</button>
                       </div>
                     {/if}
                     {#if seen > 0}
@@ -1500,7 +1553,7 @@
           {/if}
           {#if shareInfo.actors && shareInfo.actors.length > 0}
             <div>
-              <dt>Cast</dt>
+              <dt>Starring</dt>
               <dd>
                 <ul class="cast">
                   {#each (showFullCast ? shareInfo.actors : shareInfo.actors.slice(0, 6)) as actor}
@@ -1521,23 +1574,23 @@
         </dl>
       </section>
     {/if}
-
-    <!-- Ft2 · Inline single line -->
-    <footer class="foot">
-      <p>
-        Shared via <a class="foot-link" href="https://github.com/stanislavhannes/jellyfin-share-backend" target="_blank" rel="noopener noreferrer">Jellyfin Share</a>
-      </p>
-    </footer>
   {/if}
-</div>
+</main>
+
+<!-- Ft2 · Inline single line. Outside main, so it is the page's contentinfo. -->
+{#if !playerOpen}
+  <footer class="foot">
+    <p>
+      Shared via <a class="foot-link" href="https://github.com/stanislavhannes/jellyfin-share-backend" target="_blank" rel="noopener noreferrer">Jellyfin Share</a>
+    </p>
+  </footer>
+{/if}
 
 <style>
   /* Hallmark · genre: atmospheric · macrostructure: 08 Photographic
    * H6 photographic fold · nav: N9 edge-aligned · footer: Ft2 inline
    * design-system: design.md · designed-as-app
    */
-
-  .share { min-height: 100dvh; }
 
   /* ── The fold ──────────────────────────────────────────────────────────
      The artwork is the page above the break. The type is annotation laid in
@@ -1559,6 +1612,12 @@
     background:
       radial-gradient(ellipse 70% 90% at 18% 0%, var(--bloom), transparent 70%),
       var(--color-paper);
+  }
+
+  /* Locked, on a phone: the password field has to sit above the keyboard, so
+     the picture gives up most of the first screen. */
+  @media not all and (min-width: 40rem) {
+    .fold--locked:not(.fold--bare) { min-height: clamp(12rem, 32dvh, 16rem); }
   }
 
   .fold__image {
@@ -1685,7 +1744,8 @@
 
   .print img.is-loaded { opacity: 1; }
 
-  .stage--noprint { grid-template-columns: minmax(0, 1fr); }
+  /* Doubled up so it outranks the two-column .stage of every wider query. */
+  .stage.stage--noprint { grid-template-columns: minmax(0, 1fr); }
 
   .act {
     display: grid;
@@ -1789,7 +1849,9 @@
   select:disabled { opacity: 0.55; cursor: not-allowed; }
   input:read-only { color: var(--color-ink-2); }
 
-  .gate { width: 100%; max-width: 30rem; }
+  /* A grid, so on a phone Unlock stretches to the full width like every other
+     action there (see .play). */
+  .gate { display: grid; gap: var(--space-sm); width: 100%; max-width: 30rem; }
 
   .gate__row {
     display: flex;
@@ -1906,6 +1968,49 @@
     width: 100%;
   }
 
+  /* Play and the line that goes with it. On a phone this box stays out of the
+     layout; wider, once there is a line, it takes a row of its own. */
+  .play__lead { display: contents; }
+
+  /* Whose place Play goes back to, or why it moves on, said right at the
+     button (under it on a phone, beside it where there is room), with the
+     other way in as a quieter link rather than a second button. */
+  .play__note {
+    /* How far the link's hit area reaches below its line (see below). */
+    --note-reach: 1.5rem;
+    max-width: var(--measure);
+    margin-block: var(--space-2xs) var(--space-xs);
+    font-size: var(--text-sm);
+    color: var(--color-muted);
+  }
+
+  /* With a link in it, the room below is the hit area's reach, so the reach
+     can never lie over the next action. */
+  .play__note--link { margin-block-end: var(--note-reach); }
+
+  /* Ink, like "Change": it sits with Play, and the accent belongs to Play.
+     Inline in the sentence, so its box is only a line high. On a phone the hit
+     area grows to the 44px a thumb needs - downward only, so it never lies over
+     the sentence above it: a stray tap there would spend a play. */
+  .play__note .link {
+    position: relative;
+    margin-top: 0;
+    color: var(--color-ink);
+    border-bottom-color: var(--color-ink-2);
+  }
+
+  .play__note .link::after {
+    content: "";
+    position: absolute;
+    inset: 0 -0.25rem calc(-1 * var(--note-reach));
+  }
+
+  @media (hover: hover) {
+    .play__note .link:hover { border-bottom-color: var(--color-ink); }
+  }
+
+  .play__note .link:active { color: var(--color-ink-2); }
+
   /* A machine fact riding along in a button: the resume time, the format. */
   .btn__aside {
     font-family: var(--font-outlier);
@@ -1974,12 +2079,20 @@
      Red stays for things that went wrong. */
   .terms__line--warn { color: var(--color-ink); }
 
-  .fuel__track { width: 100%; max-width: 18rem; height: 2px; background: var(--color-rule); }
+  /* Thick enough to read as a gauge rather than a rule. */
+  .fuel__track {
+    width: 100%;
+    max-width: 18rem;
+    height: 4px;
+    background: var(--color-rule);
+    border-radius: var(--radius-pill);
+    overflow: hidden;
+  }
 
   .fuel__fill {
     width: 100%;
     height: 100%;
-    background: var(--color-neutral);
+    background: var(--color-muted);
     transform-origin: left center;
     transition: transform var(--dur-long) var(--ease-out);
   }
@@ -2089,14 +2202,18 @@
     max-width: var(--measure);
   }
 
+  /* In the terms' own voice, at the headline's size: it is the last of the
+     terms, not a second title under the show's. */
   .spent__head {
-    font-family: var(--font-display);
-    font-size: var(--text-lg);
-    line-height: 1.15;
+    font-size: var(--text-base);
+    font-weight: 600;
     color: var(--color-ink);
   }
 
   .spent__next { color: var(--color-ink-2); }
+
+  /* Focused only by script, when the last play ends: not controls, no ring. */
+  .spent__head:focus, .terms-head__line:focus { outline: none; }
 
   .ep--casting .ep__no { color: var(--color-accent); }
 
@@ -2313,8 +2430,11 @@
   /* ── Wider: the print laps over the photograph's edge ──────────────────── */
   @media (min-width: 40rem) {
     .plate { max-width: min(40rem, 68%); padding-bottom: var(--space-2xl); }
+    /* With no picture to lap over, the air under the title is only a gap. */
+    .fold--bare .plate { padding-bottom: var(--space-sm); }
     .act { gap: var(--space-lg); }
     .play { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); }
+    .gate__submit { justify-self: start; }
 
     .ep { align-items: center; }
     .ep--thumb {
@@ -2340,6 +2460,17 @@
     .stage--noprint .act { max-width: 42rem; }
     .play > .confirm,
     .play > .castbar__state { flex-basis: 100%; }
+    /* Beside Play where there is room, under it where not; either way the
+       other actions start the next row. */
+    .play__lead--noted {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--space-sm);
+      flex-basis: 100%;
+    }
+    .play__note { flex: 1 1 16rem; margin-block: 0; }
+    .play__note .link::after { content: none; }
     .btn-ghost { padding-inline: var(--space-lg); }
 
     /* The print sits beside the column it belongs to, not out at the far edge. */
@@ -2380,5 +2511,12 @@
     .credits { padding-block: var(--space-2xl); }
 
     .cast { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
+
+  /* A wide window: the print grows with it, so the column and its picture
+     still fill the stage instead of leaving the right third empty. */
+  @media (min-width: 80rem) {
+    .stage { grid-template-columns: minmax(0, 46rem) 18rem; }
+    .print { width: 18rem; margin-top: -12rem; }
   }
 </style>

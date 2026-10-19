@@ -61,23 +61,25 @@
   }
 </script>
 
-<main>
+<!-- Each view names its own main and footer: a footer inside a shared main
+     would not count as the page's contentinfo. -->
+<div class="app">
   {#if isAdminRoute}
     <Admin />
   {:else if loading}
-    <div class="boot">
+    <main class="boot">
       <div class="boot__meter"></div>
       <p class="boot__label">Opening the link</p>
-    </div>
+    </main>
   {:else if error}
     <ErrorView {error} />
   {:else if shareInfo}
     <ShareView {shareInfo} {token} on:passwordSuccess={handlePasswordSuccess} />
   {/if}
-</main>
+</div>
 
 <style>
-  main {
+  .app {
     min-height: 100dvh;
   }
 

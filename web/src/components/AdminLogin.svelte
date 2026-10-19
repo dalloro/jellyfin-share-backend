@@ -48,7 +48,7 @@
     <span class="nav__status">admin</span>
   </header>
 
-  <div class="login__body">
+  <main class="login__body">
     <h1 class="login__title">Sign in</h1>
     <p class="login__lede">
       The admin surface is held open by the backend key, not by an account.
@@ -87,7 +87,7 @@
         {/if}
       </button>
     </form>
-  </div>
+  </main>
 
   <footer class="foot">
     <p class="foot__line">
@@ -105,7 +105,7 @@
    * nav: N9 edge-aligned · footer: Ft4 dense colophon
    * design-system: design.md · designed-as-app
    */
-  /* App family, single-field variant: left-biased, no card, one warm bloom.
+  /* App family, single-field variant: left-biased, no card, one accent bloom.
      The old centred login-box was the most templated shape in the app. */
   .login {
     display: grid;

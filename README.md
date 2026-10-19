@@ -505,11 +505,12 @@ Jellyfin before being fixed; the numbers below are measured.
   always the original file: a share's quality cap applies to streaming only.
 - **Resume.** The server remembers where a link was left - per film and per
   episode - so a film started on a phone resumes on the laptop. The page then
-  offers *Resume* with the time beside *From the start*; a series picks up on the
-  episode last watched, or on the next one once that was finished. Each episode
-  row shows how much of it has been seen, and a film or episode watched to the
-  end is ticked. The progress belongs to the link, not to a person: everyone
-  holding the same link shares it.
+  offers *Resume* with the time, a line saying whose place that is, and a link
+  to start that film or episode over; a series picks up on the episode last
+  watched, or on the next one once that was finished. Each episode row shows
+  how much of it has been seen, and a film or episode watched to the end is
+  ticked. The progress belongs to the link, not to a person: everyone holding
+  the same link shares it.
   - The playing page reports its position with every heartbeat, when the tab
     closes or goes to the background, and when playback stops.
   - **AirPlay** plays through the page's own video element, so its position is

@@ -66,11 +66,11 @@
     <span class="wordmark"><BrandMark />Jellyfin Share</span>
   </header>
 
-  <div class="error__body">
+  <main class="error__body">
     <h1 class="error__title">{errorInfo.title}</h1>
     <p class="error__lede">{errorInfo.description}</p>
     <p class="error__action">{errorInfo.action}</p>
-  </div>
+  </main>
 
   <footer class="foot">
     <p>Shared via <a class="foot-link" href="https://github.com/stanislavhannes/jellyfin-share-backend" target="_blank" rel="noopener noreferrer">Jellyfin Share</a></p>
@@ -83,7 +83,7 @@
    * design-system: design.md · designed-as-app
    */
   /* No card, no centred column, no icon. The statement sits low-left against a
-     single warm bloom; the emptiness above it is the design. */
+     single accent bloom; the emptiness above it is the design. */
   .error {
     display: grid;
     grid-template-rows: auto 1fr auto;
@@ -142,7 +142,6 @@
     padding-block: var(--space-md) var(--space-lg);
     padding-bottom: max(var(--space-lg), env(safe-area-inset-bottom));
     border-top: var(--rule-hair) solid var(--color-rule-2);
-    font-family: var(--font-outlier);
     font-size: var(--text-sm);
     color: var(--color-neutral);
   }

@@ -175,7 +175,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 .foot-link:active { color: var(--color-ink-2); }
 
-/* One warm bloom for the pages that carry no photography of their own.
+/* One accent bloom for the pages that carry no photography of their own.
    Fixed, unanimated, ~26% footprint. */
 .bloom-ground { position: relative; }
 .bloom-ground::before {
