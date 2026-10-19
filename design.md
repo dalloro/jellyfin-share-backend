@@ -308,16 +308,19 @@ below 40 rem; `dvh` not `vh`; `env(safe-area-inset-*)` respected top and
 bottom. The admin index does **not** ship a table below 60 rem — it restacks.
 
 Breakpoints are `40rem` and `60rem`, plus `80rem` on the share page. The
-share page goes `min-width` first, and its one query below 40 rem
-(`not all and (min-width: 40rem)`) is the locked fold. The admin index
-restacks with `max-width` queries.
+share page goes `min-width` first; its queries below 40 rem
+(`not all and (min-width: 40rem)`) are the locked fold and the one that lets
+Play grow a second line. The admin index restacks with `max-width` queries.
 
 Below 40 rem the share page's first screen holds the title, the terms'
 headline and Play: the audio and subtitle choice is one line ("Audio: English
 (Stereo) · Subtitles: None — Change") above Play, Play takes the full width,
 and each secondary action takes a full-width line of its own below it, so no
-label is ever cut short. From 40 rem they share one row, and the poster sits
-beside the action column (38 / 42 rem wide) rather than at the far edge;
+label is ever cut short. When Play holds more than a line ("Resume Episode 2"
+and "14:05 of 38:41"), it grows: the time drops under the label, and a label
+too long for the line wraps beside the play glyph, rather than pushing the
+column past the screen's edge. From 40 rem they share one row, and the poster
+sits beside the action column (38 / 42 rem wide) rather than at the far edge;
 without a poster the column stops at 42 rem. From 80 rem the column widens to
 46 rem and the print to 18 rem, so a wide window is not left a third empty. A
 title with no artwork gets a bare fold that shrinks to the nav and title, with

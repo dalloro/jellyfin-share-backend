@@ -119,7 +119,7 @@
 
   // The episode after the one playing, for the card near its end.
   $: upNext = isPlaying && currentEpisodeId ? nextEpisode(currentEpisodeId) : null;
-  $: nextUpCard = upNext ? { label: episodeLabel(upNext), name: upNext.name } : null;
+  $: nextUpCard = upNext ? { label: episodeLabel(upNext, multiSeason), name: upNext.name } : null;
 
   // The track the viewer picked, so the player can name it and switch it on.
   $: chosenSubtitle = (shareInfo.subtitleTracks || []).find((t) => t.index === selectedSubtitleIndex);
@@ -645,7 +645,7 @@
     return castItem({
       playPath: episodePlayPath(episode.id, { codec: 'h264', continues }),
       title: episode.name,
-      subtitle: `${episodeLabel(episode)} \u00b7 ${displayTitle}`,
+      subtitle: `${episodeLabel(episode, multiSeason)} \u00b7 ${displayTitle}`,
       durationSeconds: episode.runtimeSeconds,
       episodeId: episode.id,
       startTime,
@@ -678,10 +678,20 @@
   // named only when the link spans more than one.
   $: multiSeason = shareInfo.itemType === 'Series';
 
-  function episodeLabel(episode) {
+  // multiSeason is passed in, not read, so that every reactive statement and
+  // template expression that names an episode lists it and follows it.
+  function episodeLabel(episode, spansSeasons) {
     const n = `Episode ${episode.indexNumber || '?'}`;
-    return multiSeason && episode.seasonNumber ? `Season ${episode.seasonNumber}, ${n.toLowerCase()}` : n;
+    return spansSeasons && episode.seasonNumber ? `Season ${episode.seasonNumber}, ${n.toLowerCase()}` : n;
   }
+
+  // What a series' Play does, in its own words.
+  function seriesPlayText(resume, list, spansSeasons) {
+    if (resume?.position > 0) return `Resume ${episodeLabel(resume.episode, spansSeasons)}`;
+    if (resume) return `${resume.isNext ? 'Continue with' : 'Play'} ${episodeLabel(resume.episode, spansSeasons)}`;
+    return list.length ? `Play ${episodeLabel(list[0], spansSeasons)}` : '';
+  }
+  $: seriesPlayLabel = seriesPlayText(seriesResume, episodes, multiSeason);
 
   // The list is already in running order, so "next" is simply the row below.
   function nextEpisode(afterId) {
@@ -761,7 +771,7 @@
       }
       playbackData = data;
       currentEpisodeId = next.id;
-      currentPlayingTitle = `${episodeLabel(next)}: ${next.name}`;
+      currentPlayingTitle = `${episodeLabel(next, multiSeason)}: ${next.name}`;
     } catch (e) {
       nextFailed(OFFLINE, previous, next);
     }
@@ -852,7 +862,7 @@
       startPosition = startAt;
       playbackData = await response.json();
       spendPlay();
-      currentPlayingTitle = `${episodeLabel(episode)}: ${episode.name}`;
+      currentPlayingTitle = `${episodeLabel(episode, multiSeason)}: ${episode.name}`;
       currentEpisodeId = episode.id;
       isPlaying = true;
     } catch (e) {
@@ -1259,14 +1269,12 @@
                       <span class="meter meter--inline" aria-hidden="true"></span>
                       <span>Starting</span>
                     {:else}
-                      <PlayIcon />
-                      {#if seriesResume?.position > 0}
-                        <span>Resume {episodeLabel(seriesResume.episode)}</span>
+                      <span class="btn__main">
+                        <PlayIcon />
+                        <span>{seriesPlayLabel}</span>
+                      </span>
+                      {#if resumedMidway}
                         <span class="btn__aside">{clockOf(seriesResume.position, seriesResume.episode.runtimeSeconds)}</span>
-                      {:else if seriesResume}
-                        <span>{seriesResume.isNext ? 'Continue with' : 'Play'} {episodeLabel(seriesResume.episode)}</span>
-                      {:else}
-                        <span>Play {episodeLabel(episodes[0])}</span>
                       {/if}
                     {/if}
                   </button>
@@ -1278,7 +1286,7 @@
                              place, so there is nothing to wait for or recompute. -->
                         <button class="link" on:click={() => playEpisode(seriesResume.episode)}
                                 disabled={busy || playsUsedUp}>
-                          Restart {episodeLabel(seriesResume.episode)}
+                          Restart {episodeLabel(seriesResume.episode, multiSeason)}
                         </button>
                       {/if}
                     </p>
@@ -1334,12 +1342,12 @@
                     <span class="meter meter--inline" aria-hidden="true"></span>
                     <span>Starting</span>
                   {:else}
-                    <PlayIcon />
-                    {#if movieResumeAt > 0}
-                      <span>Resume</span>
+                    <span class="btn__main">
+                      <PlayIcon />
+                      <span>{resumedMidway ? 'Resume' : 'Play'}</span>
+                    </span>
+                    {#if resumedMidway}
                       <span class="btn__aside">{clockOf(movieResumeAt, shareInfo.runtimeSeconds)}</span>
-                    {:else}
-                      <span>Play</span>
                     {/if}
                   {/if}
                 </button>
@@ -1445,7 +1453,7 @@
                     {#if spent}
                       <!-- Nothing left to play it with: the list stays, as a record. -->
                       <div class="ep ep--static" class:ep--thumb={thumb}>
-                        <span class="sr-only">{episodeLabel(episode)}:</span>
+                        <span class="sr-only">{episodeLabel(episode, multiSeason)}:</span>
                         <span class="ep__no" aria-hidden="true">{#if multiSeason && episode.seasonNumber}{episode.seasonNumber}.{episode.indexNumber || '?'}{:else}{episode.indexNumber || '?'}{/if}</span>
                         {#if thumb}
                           <img class="ep__thumb" src="{episode.posterUrl}?maxWidth=320" alt="" loading="lazy"
@@ -1467,7 +1475,7 @@
                             disabled={busy || playsUsedUp}
                             aria-describedby={episode.overview ? `ep-about-${episode.id}` : undefined}
                             on:click={() => resumeEpisode(episode)}>
-                      <span class="sr-only">{$castConnected ? `Play on ${$castDeviceName}:` : 'Play'} {episodeLabel(episode)}:</span>
+                      <span class="sr-only">{$castConnected ? `Play on ${$castDeviceName}:` : 'Play'} {episodeLabel(episode, multiSeason)}:</span>
                       <span class="ep__no" aria-hidden="true">
                         {#if multiSeason && episode.seasonNumber}{episode.seasonNumber}.{episode.indexNumber || '?'}{:else}{episode.indexNumber || '?'}{/if}
                       </span>
@@ -1506,7 +1514,7 @@
                       <button class="ep__dl" id="dl-{episode.id}" on:click={() => rowDownload(episode.id, () => downloadEpisode(episode))}
                               disabled={busy || playsUsedUp} aria-expanded={playLimit ? confirmingDownload === episode.id : undefined}
                               title={episode.sizeBytes ? `Download · ${formatBytes(episode.sizeBytes)}` : 'Download'}
-                              aria-label="Download {episodeLabel(episode)}: {episode.name}{episode.sizeBytes ? `, ${formatBytes(episode.sizeBytes)}` : ''}{playLimit ? ' (uses a play)' : ''}">
+                              aria-label="Download {episodeLabel(episode, multiSeason)}: {episode.name}{episode.sizeBytes ? `, ${formatBytes(episode.sizeBytes)}` : ''}{playLimit ? ' (uses a play)' : ''}">
                         {#if preparingDownload === episode.id}
                           <span class="meter meter--dot" aria-hidden="true"></span>
                         {:else}
@@ -1516,7 +1524,7 @@
                     {/if}
                     {#if confirmingDownload === episode.id}
                       <div class="confirm confirm--row" role="group" aria-labelledby="confirm-{episode.id}">
-                        <p class="confirm__q" id="confirm-{episode.id}">{downloadCost(episodeLabel(episode).toLowerCase(), episode.sizeBytes)}</p>
+                        <p class="confirm__q" id="confirm-{episode.id}">{downloadCost(episodeLabel(episode, multiSeason).toLowerCase(), episode.sizeBytes)}</p>
                         <button class={lastPlay ? 'btn-danger' : 'btn-primary'} use:focusOnMount on:keydown={escapeTo(episode.id)} on:click={() => downloadEpisode(episode)}>Download it</button>
                         <button class="btn-ghost" on:keydown={escapeTo(episode.id)} on:click={() => keepPlay(episode.id)}>Don’t download</button>
                       </div>
@@ -1897,6 +1905,24 @@
     font-size: var(--text-md);
   }
 
+  /* On a phone Play can hold more than a line: "Resume Episode 2" and where
+     it stopped, or a long "Season 2, episode 12". Rather than push the column
+     past the screen's edge, it grows: the time drops under the label, and a
+     label too long for the line wraps beside the glyph (see .btn__main). */
+  @media not all and (min-width: 40rem) {
+    .btn-primary--lg {
+      flex-wrap: wrap;
+      row-gap: 0;
+      height: auto;
+      min-height: 3.25rem;
+      padding-block: var(--space-xs);
+      line-height: 1.25;
+      white-space: normal;
+      /* Centres a wrapped label's second line, which flex alone does not. */
+      text-align: center;
+    }
+  }
+
   .btn-primary :global(svg) { width: 1.15rem; height: 1.15rem; }
 
   /* Icons never shrink the label or get squeezed by it. */
@@ -1964,6 +1990,8 @@
      put them in one row (see the 40rem query). */
   .play {
     display: grid;
+    /* The track is the column's width, never its widest label's. */
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-xs);
     width: 100%;
   }
@@ -2011,12 +2039,24 @@
 
   .play__note .link:active { color: var(--color-ink-2); }
 
+  /* The glyph and the words it belongs to, kept together when Play wraps. */
+  .btn__main {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .btn__main :global(svg) { flex-shrink: 0; }
+
   /* A machine fact riding along in a button: the resume time, the format. */
   .btn__aside {
     font-family: var(--font-outlier);
     font-size: var(--text-sm);
     font-weight: 400;
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
     opacity: 0.75;
   }
 
@@ -2151,7 +2191,9 @@
     grid-template-columns: 2.5rem minmax(0, 1fr) auto;
     grid-template-areas: "no body end";
     gap: var(--space-md);
-    align-items: baseline;
+    /* Centred, like the download beside it: with an overview under the name
+       the row is taller than one line. */
+    align-items: center;
     padding: var(--space-md) 0;
     text-align: start;
     background: none;
@@ -2436,7 +2478,6 @@
     .play { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); }
     .gate__submit { justify-self: start; }
 
-    .ep { align-items: center; }
     .ep--thumb {
       grid-template-columns: 2.5rem 7.5rem minmax(0, 1fr) auto;
       grid-template-areas: "no thumb body end";

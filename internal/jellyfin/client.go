@@ -280,6 +280,8 @@ type EpisodeInfo struct {
 	ID                string `json:"id"`
 	Name              string `json:"name"`
 	IndexNumber       int    `json:"indexNumber"`
+	// Overview is the episode's synopsis. Of the episode queries only
+	// GetEpisodeListFor asks Jellyfin for it.
 	Overview          string `json:"overview,omitempty"`
 	RuntimeSeconds    int64  `json:"runtimeSeconds,omitempty"`
 	HasPoster         bool   `json:"hasPoster"`
@@ -308,11 +310,12 @@ func (c *Client) GetEpisodesFor(ctx context.Context, itemType, itemID string) ([
 	return c.episodes(ctx, itemType, itemID, "")
 }
 
-// GetEpisodeListFor is GetEpisodesFor with each episode's file size, for the
-// list a viewer sees. The size costs every episode's media sources, so the
+// GetEpisodeListFor is GetEpisodesFor with each episode's file size and
+// overview, for the list a viewer sees. Jellyfin leaves both out of a list
+// unless asked, and the size costs every episode's media sources, so the
 // checks that only need the ids - is this episode in the share - do without.
 func (c *Client) GetEpisodeListFor(ctx context.Context, itemType, itemID string) ([]EpisodeInfo, error) {
-	return c.episodes(ctx, itemType, itemID, "MediaSources")
+	return c.episodes(ctx, itemType, itemID, "MediaSources,Overview")
 }
 
 func (c *Client) episodes(ctx context.Context, itemType, itemID, fields string) ([]EpisodeInfo, error) {
