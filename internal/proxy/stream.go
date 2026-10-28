@@ -106,6 +106,10 @@ func (p *StreamProxy) buildJellyfinStreamURL(itemID, path, query string) string 
 	params.Del("api_key")
 
 	// Handle different path types
+	if strings.ToLower(params.Get("VideoCodec")) == "hevc" {
+		params.Set("SegmentContainer", "mp4")
+	}
+
 	if strings.HasSuffix(path, ".m3u8") {
 		// HLS manifest
 		params.Set("MediaSourceId", itemID)
