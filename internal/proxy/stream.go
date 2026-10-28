@@ -149,6 +149,9 @@ func (p *StreamProxy) buildJellyfinStreamURL(itemID, path, query string, session
 	if videoCodec != "" {
 		params.Set("VideoCodec", videoCodec)
 	}
+	if videoCodec == "hevc" {
+		params.Set("SegmentContainer", "mp4")
+	}
 	if p.cfg.StreamAudioCodec != "" {
 		params.Set("AudioCodec", p.cfg.StreamAudioCodec)
 	}
